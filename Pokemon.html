@@ -2684,11 +2684,11 @@
         // --- HELPERS for DEX ---
         async function _heal(battle, user, pct) {
             if (user.currentHp === user.maxHp) { await battle.typeText("It's already\nfully healthy!"); return false; }
+
             const amt = Math.floor(user.maxHp * pct);
-            user.currentHp = Math.min(user.maxHp, user.currentHp + amt);
-            battle.updateHUD(user, user === battle.p ? 'player' : 'enemy');
-            AudioEngine.playSfx('heal');
-            await battle.typeText(`${user.name} regained\nhealth!`);
+            // Use Helper (automatically handles HUD, Sound, and "Regained health" text)
+            await battle.applyHeal(user, amt);
+
             return true;
         }
 
@@ -2768,6 +2768,29 @@
             greatball: { name: "GREAT BALL", type: 'ball', rate: 1.5, desc: "A good Ball with a higher catch rate.", css: 'great', img: "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/great-ball.png" },
             ultraball: { name: "ULTRA BALL", type: 'ball', rate: 2, desc: "A better Ball with a high catch rate.", css: 'ultra', img: "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/ultra-ball.png" },
             masterball: { name: "MASTER BALL", type: 'ball', rate: 255, desc: "The best Ball. It catches without fail.", css: 'master', img: "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/master-ball.png" }
+        };
+
+
+        const StatCalc = {
+            // Gen 2 Style Formula
+            other: (base, lvl) => Math.floor((2 * base * lvl) / 100 + 5),
+            hp: (base, lvl) => Math.floor((2 * base * lvl) / 100 + lvl + 10),
+
+            // Updates a Pokemon object in-place
+            recalculate: (p) => {
+                const oldMax = p.maxHp;
+
+                p.stats.atk = StatCalc.other(p.baseStats.atk, p.level);
+                p.stats.def = StatCalc.other(p.baseStats.def, p.level);
+                p.stats.spa = StatCalc.other(p.baseStats.spa, p.level);
+                p.stats.spd = StatCalc.other(p.baseStats.spd, p.level);
+                p.stats.spe = StatCalc.other(p.baseStats.spe, p.level);
+                p.stats.hp = StatCalc.hp(p.baseStats.hp, p.level);
+
+                // Adjust current HP to match the growth
+                p.maxHp = p.stats.hp;
+                p.currentHp += (p.maxHp - oldMax);
+            }
         };
 
         const AudioEngine = {
@@ -2888,8 +2911,6 @@
 
         const API = {
             base: 'https://pokeapi.co/api/v2',
-            // IN: API object
-            // IN: API object
             async getPokemon(id, level, overrides = {}) {
                 try {
                     const res = await fetch(`${this.base}/pokemon/${id}`); const data = await res.json();
@@ -2897,9 +2918,14 @@
 
                     const isShiny = (overrides.shiny !== undefined && overrides.shiny !== null) ? overrides.shiny : Math.random() < 0.05;
 
-                    const calcStat = (base, lvl) => Math.floor((2 * base * lvl) / 100 + 5);
-                    const calcHp = (base, lvl) => Math.floor((2 * base * lvl) / 100 + lvl + 10);
-                    const stats = { hp: calcHp(getStat('hp'), level), atk: calcStat(getStat('attack'), level), def: calcStat(getStat('defense'), level), spa: calcStat(getStat('special-attack'), level), spd: calcStat(getStat('special-defense'), level), spe: calcStat(getStat('speed'), level) };
+                    const stats = {
+                        hp: StatCalc.hp(getStat('hp'), level),
+                        atk: StatCalc.other(getStat('attack'), level),
+                        def: StatCalc.other(getStat('defense'), level),
+                        spa: StatCalc.other(getStat('special-attack'), level),
+                        spd: StatCalc.other(getStat('special-defense'), level),
+                        spe: StatCalc.other(getStat('speed'), level)
+                    };
 
                     // MOVE FETCHING LOGIC
                     let availableMoves = data.moves.map(m => m.move.name).sort(() => 0.5 - Math.random());
@@ -2990,7 +3016,8 @@
         };
 
         const Input = {
-            focus: 0, mode: 'NONE', lcdEnabled: false,
+            focus: 0, mode: 'NONE', lcdEnabled: false, lastFocus: -1,
+
             init() { document.addEventListener('keydown', (e) => this.handleKey(e)); },
 
             setMode(m, resetIndex = 0) {
@@ -3000,44 +3027,39 @@
                 this.updateVisuals();
             },
 
-            updateVisuals() {
-                document.querySelectorAll('.focused').forEach(el => el.classList.remove('focused'));
-                let target = null;
+            // --- 1. VISUAL HIGHLIGHTING LOGIC ---
+            visuals: {
+                'BATTLE': () => document.getElementById(['opt-fight', 'opt-pkmn', 'opt-pack', 'opt-run'][Input.focus]),
+                'CONTINUE': () => document.getElementById(['opt-continue', 'opt-newgame'][Input.focus]),
+                'CONFIRM_RUN': () => document.querySelectorAll('#action-menu .menu-item')[Input.focus],
 
-                if (this.mode === 'BATTLE') {
-                    target = document.getElementById(['opt-fight', 'opt-pkmn', 'opt-pack', 'opt-run'][this.focus]);
-                } else if (this.mode === 'CONTINUE') {
-                    target = document.getElementById(['opt-continue', 'opt-newgame'][this.focus]);
-                } else if (this.mode === 'CONFIRM_RUN') {
-                    target = document.querySelectorAll('#action-menu .menu-item')[this.focus];
-                } else if (this.mode === 'MOVES') {
+                'MOVES': () => {
                     const opts = document.querySelectorAll('#move-grid .move-btn');
-                    if (this.focus >= opts.length) this.focus = opts.length - 1;
-                    target = opts[this.focus];
+                    if (Input.focus >= opts.length) Input.focus = opts.length - 1;
+                    const target = opts[Input.focus];
 
-                    // --- NEW: UPDATE INFO PANEL FROM KEYBOARD ---
+                    // Update Info Panel
                     if (target) {
                         const info = document.getElementById('move-info');
-                        // Check if it is the Back button
                         if (target.dataset.action === 'back') {
                             info.innerHTML = '<div>RETURN<br>TO MENU</div>';
-                        }
-                        // Otherwise check for Move Data
-                        else if (target.dataset.type) {
+                        } else if (target.dataset.type) {
                             info.innerHTML = `<div>TYPE/<br>${target.dataset.type.toUpperCase()}</div><div>PWR/${target.dataset.power}</div><div>ACC/${target.dataset.accuracy}%</div>`;
                         }
                     }
-                    // --------------------------------------------
-                } else if (this.mode === 'SELECTION') {
-                    target = document.getElementById(`ball-${this.focus}`);
+                    return target;
+                },
+
+                'SELECTION': () => {
+                    const target = document.getElementById(`ball-${Input.focus}`);
                     const cursor = document.getElementById('sel-cursor');
                     const positions = [25, 90, 155];
-                    if (cursor) cursor.style.left = positions[this.focus] + 'px';
+                    if (cursor) cursor.style.left = positions[Input.focus] + 'px';
 
-                    if (Game.tempSelectionList && Game.tempSelectionList[this.focus]) {
-                        const p = Game.tempSelectionList[this.focus];
-                        if (this.lastFocus !== this.focus) {
-                            this.lastFocus = this.focus;
+                    if (Game.tempSelectionList && Game.tempSelectionList[Input.focus]) {
+                        const p = Game.tempSelectionList[Input.focus];
+                        if (Input.lastFocus !== Input.focus) {
+                            Input.lastFocus = Input.focus;
                             AudioEngine.playCry(p.cry);
                             const prevImg = document.getElementById('sel-preview-img');
                             const prevShiny = document.getElementById('sel-preview-shiny');
@@ -3049,100 +3071,138 @@
                             Battle.typeText(`Will you choose\n${p.name}?`, null, true);
                         }
                     }
-                } else if (this.mode === 'PARTY') {
+                    return target;
+                },
+
+                'PARTY': () => {
                     const opts = document.querySelectorAll('.party-slot');
-                    target = opts[this.focus];
-                    if (this.focus === opts.length) target = document.getElementById('party-close-btn');
-                } else if (this.mode === 'CONTEXT') {
-                    target = document.querySelectorAll('#party-context .ctx-btn')[this.focus];
-                } else if (this.mode === 'BAG') {
-                    target = document.querySelectorAll('.pack-item')[this.focus];
-                } else if (this.mode === 'SUMMARY') {
-                    target = document.querySelectorAll('.sum-buttons .confirm-btn')[this.focus];
+                    if (Input.focus === opts.length) return document.getElementById('party-close-btn');
+                    return opts[Input.focus];
+                },
+
+                'CONTEXT': () => document.querySelectorAll('#party-context .ctx-btn')[Input.focus],
+
+                'BAG': () => {
+                    const target = document.querySelectorAll('.pack-item')[Input.focus];
+                    // Trigger hover description
+                    if (target && target.classList.contains('pack-item') && !target.classList.contains('cancel-btn')) target.onmouseover();
+                    return target;
+                },
+
+                'SUMMARY': () => document.querySelectorAll('.sum-buttons .confirm-btn')[Input.focus]
+            },
+
+            updateVisuals() {
+                // Clear old focus
+                document.querySelectorAll('.focused').forEach(el => el.classList.remove('focused'));
+
+                // Find new target based on current Mode
+                let target = null;
+                if (this.visuals[this.mode]) {
+                    target = this.visuals[this.mode]();
                 }
 
+                // Apply Focus
                 if (target) {
                     target.classList.add('focused');
                     if (target.scrollIntoViewIfNeeded) target.scrollIntoViewIfNeeded(false);
                     else target.scrollIntoView({ block: 'nearest' });
-
-                    if (this.mode === 'BAG' && target.classList.contains('pack-item') && !target.classList.contains('cancel-btn')) {
-                        target.onmouseover();
-                    }
                 }
             },
-            lastFocus: -1,
+
+            // --- 2. INPUT HANDLERS ---
+            handlers: {
+                'START': (k) => {
+                    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) { Game.toggleLcd(); AudioEngine.playSfx('select'); }
+                    if (['z', 'Z', 'Enter'].includes(k)) Game.checkSave();
+                },
+                'NAME': (k) => {
+                    if (['z', 'Z', 'Enter'].includes(k)) Game.confirmName();
+                },
+                'CONTINUE': (k) => {
+                    if (k === 'ArrowUp' || k === 'ArrowDown') Input.focus = Input.focus === 0 ? 1 : 0;
+                    if (['z', 'Z', 'Enter'].includes(k)) document.getElementById(['opt-continue', 'opt-newgame'][Input.focus]).click();
+                },
+                'BATTLE': (k) => {
+                    if (k === 'ArrowRight' && Input.focus % 2 === 0) Input.focus++;
+                    if (k === 'ArrowLeft' && Input.focus % 2 !== 0) Input.focus--;
+                    if (k === 'ArrowDown' && Input.focus < 2) Input.focus += 2;
+                    if (k === 'ArrowUp' && Input.focus > 1) Input.focus -= 2;
+                    if (['z', 'Z', 'Enter'].includes(k)) document.getElementById(['opt-fight', 'opt-pkmn', 'opt-pack', 'opt-run'][Input.focus]).click();
+                },
+                'CONFIRM_RUN': (k) => {
+                    if (k === 'ArrowRight' || k === 'ArrowDown') Input.focus = 1;
+                    if (k === 'ArrowLeft' || k === 'ArrowUp') Input.focus = 0;
+                    if (['z', 'Z', 'Enter'].includes(k)) document.querySelectorAll('#action-menu .menu-item')[Input.focus].click();
+                },
+                'MOVES': (k) => {
+                    const len = document.querySelectorAll('.move-btn').length;
+                    if (k === 'ArrowRight' && Input.focus % 2 === 0 && Input.focus < len - 1) Input.focus++;
+                    if (k === 'ArrowLeft' && Input.focus % 2 !== 0) Input.focus--;
+                    if (k === 'ArrowDown') { if (Input.focus < len - 2) Input.focus += 2; else if (Input.focus < len - 1) Input.focus = len - 1; }
+                    if (k === 'ArrowUp') { if (Input.focus >= 2) Input.focus -= 2; else if (Input.focus === len - 1) Input.focus = 0; }
+                    if (Input.focus >= len) Input.focus = len - 1;
+                    if (['z', 'Z', 'Enter'].includes(k)) document.querySelectorAll('.move-btn')[Input.focus].click();
+                },
+                'SELECTION': (k) => {
+                    if (k === 'ArrowRight') Input.focus = Math.min(2, Input.focus + 1);
+                    if (k === 'ArrowLeft') Input.focus = Math.max(0, Input.focus - 1);
+                    if (['z', 'Z', 'Enter'].includes(k)) document.getElementById(`ball-${Input.focus}`).click();
+                },
+                'BAG': (k) => {
+                    const len = document.querySelectorAll('.pack-item').length;
+                    if (k === 'ArrowDown') Input.focus = Math.min(len - 1, Input.focus + 1);
+                    if (k === 'ArrowUp') Input.focus = Math.max(0, Input.focus - 1);
+                    if (['z', 'Z', 'Enter'].includes(k)) document.querySelectorAll('.pack-item')[Input.focus].click();
+                },
+                'PARTY': (k) => {
+                    const len = Game.party.length; // Length is the Close Button index
+                    if (k === 'ArrowDown') Input.focus = Math.min(len, Input.focus + 1);
+                    if (k === 'ArrowUp') Input.focus = Math.max(0, Input.focus - 1);
+                    if (['z', 'Z', 'Enter'].includes(k)) {
+                        if (Input.focus === len) document.getElementById('party-close-btn').click();
+                        else document.querySelectorAll('.party-slot')[Input.focus].click();
+                    }
+                },
+                'CONTEXT': (k) => {
+                    const len = document.querySelectorAll('#party-context .ctx-btn').length;
+                    if (k === 'ArrowDown') Input.focus = Math.min(len - 1, Input.focus + 1);
+                    if (k === 'ArrowUp') Input.focus = Math.max(0, Input.focus - 1);
+                    if (['z', 'Z', 'Enter'].includes(k)) document.querySelectorAll('#party-context .ctx-btn')[Input.focus].click();
+                },
+                'SUMMARY': (k) => {
+                    if (k === 'ArrowRight') { if (Input.focus < 3) Input.focus++; else Game.navSummary(1); }
+                    if (k === 'ArrowLeft') { if (Input.focus > 0) Input.focus--; else Game.navSummary(-1); }
+                    if (k === 'ArrowDown') Game.navSummary(1);
+                    if (k === 'ArrowUp') Game.navSummary(-1);
+                    if (['z', 'Z', 'Enter'].includes(k)) document.querySelectorAll('.sum-buttons .confirm-btn')[Input.focus].click();
+                }
+            },
 
             handleKey(e) {
-                if (Battle.uiLocked && this.mode !== 'START' && this.mode !== 'CONTINUE' && this.mode !== 'NAME') return;
+                // Global Lock Check (Except for Title Screens)
+                if (Battle.uiLocked && !['START', 'CONTINUE', 'NAME'].includes(this.mode)) return;
 
                 const k = e.key;
 
+                // 1. Global Back Button (X)
                 if (k === 'x' || k === 'X') {
-                    if (this.mode === 'MOVES' || this.mode === 'BAG' || this.mode === 'CONFIRM_RUN') { Battle.uiToMenu(); return; }
+                    if (['MOVES', 'BAG', 'CONFIRM_RUN'].includes(this.mode)) { Battle.uiToMenu(); return; }
                     if (this.mode === 'PARTY') { if (document.getElementById('party-close-btn').innerText !== "CHOOSE A POKEMON") Battle.uiToMenu(); return; }
                     if (this.mode === 'CONTEXT') { Game.closeContext(); return; }
                     if (this.mode === 'SUMMARY') { Game.closeSummary(); return; }
                 }
 
-                if (this.mode === 'START') {
-                    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) { Game.toggleLcd(); AudioEngine.playSfx('select'); }
-                    if (k === 'z' || k === 'Z' || k === 'Enter') Game.checkSave();
-                    return;
+                // 2. Global Navigation Sound
+                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k) && this.mode !== 'NAME' && this.mode !== 'START') {
+                    AudioEngine.playSfx('select');
                 }
 
-                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k) && this.mode !== 'NAME') AudioEngine.playSfx('select');
-
-                if (this.mode === 'NAME') {
-                    if (k === 'Enter') Game.confirmName();
-                } else if (this.mode === 'CONTINUE') {
-                    if (k === 'ArrowUp' || k === 'ArrowDown') this.focus = this.focus === 0 ? 1 : 0;
-                    if (k === 'z' || k === 'Z' || k === 'Enter') document.getElementById(['opt-continue', 'opt-newgame'][this.focus]).click();
-                } else if (this.mode === 'BATTLE') {
-                    if (k === 'ArrowRight' && this.focus % 2 === 0) this.focus++;
-                    if (k === 'ArrowLeft' && this.focus % 2 !== 0) this.focus--;
-                    if (k === 'ArrowDown' && this.focus < 2) this.focus += 2;
-                    if (k === 'ArrowUp' && this.focus > 1) this.focus -= 2;
-                    if (k === 'z' || k === 'Z' || k === 'Enter') document.getElementById(['opt-fight', 'opt-pkmn', 'opt-pack', 'opt-run'][this.focus]).click();
-                } else if (this.mode === 'CONFIRM_RUN') {
-                    if (k === 'ArrowRight' || k === 'ArrowDown') this.focus = 1;
-                    if (k === 'ArrowLeft' || k === 'ArrowUp') this.focus = 0;
-                    if (k === 'z' || k === 'Z' || k === 'Enter') document.querySelectorAll('#action-menu .menu-item')[this.focus].click();
-                } else if (this.mode === 'MOVES') {
-                    const len = document.querySelectorAll('.move-btn').length;
-                    if (k === 'ArrowRight' && this.focus % 2 === 0 && this.focus < len - 1) this.focus++;
-                    if (k === 'ArrowLeft' && this.focus % 2 !== 0) this.focus--;
-                    if (k === 'ArrowDown') { if (this.focus < len - 2) this.focus += 2; else if (this.focus < len - 1) this.focus = len - 1; }
-                    if (k === 'ArrowUp') { if (this.focus >= 2) this.focus -= 2; else if (this.focus === len - 1) this.focus = 0; }
-                    if (this.focus >= len) this.focus = len - 1;
-                    if (k === 'z' || k === 'Z' || k === 'Enter') document.querySelectorAll('.move-btn')[this.focus].click();
-                } else if (this.mode === 'SELECTION') {
-                    if (k === 'ArrowRight') this.focus = Math.min(2, this.focus + 1);
-                    if (k === 'ArrowLeft') this.focus = Math.max(0, this.focus - 1);
-                    if (k === 'z' || k === 'Z' || k === 'Enter') document.getElementById(`ball-${this.focus}`).click();
-                } else if (this.mode === 'BAG') {
-                    const len = document.querySelectorAll('.pack-item').length;
-                    if (k === 'ArrowDown') this.focus = Math.min(len - 1, this.focus + 1);
-                    if (k === 'ArrowUp') this.focus = Math.max(0, this.focus - 1);
-                    if (k === 'z' || k === 'Z' || k === 'Enter') document.querySelectorAll('.pack-item')[this.focus].click();
-                } else if (this.mode === 'PARTY') {
-                    const len = Game.party.length;
-                    if (k === 'ArrowDown') this.focus = Math.min(len, this.focus + 1);
-                    if (k === 'ArrowUp') this.focus = Math.max(0, this.focus - 1);
-                    if (k === 'z' || k === 'Z' || k === 'Enter') { if (this.focus === len) document.getElementById('party-close-btn').click(); else document.querySelectorAll('.party-slot')[this.focus].click(); }
-                } else if (this.mode === 'CONTEXT') {
-                    const len = document.querySelectorAll('#party-context .ctx-btn').length;
-                    if (k === 'ArrowDown') this.focus = Math.min(len - 1, this.focus + 1);
-                    if (k === 'ArrowUp') this.focus = Math.max(0, this.focus - 1);
-                    if (k === 'z' || k === 'Z' || k === 'Enter') document.querySelectorAll('#party-context .ctx-btn')[this.focus].click();
-                } else if (this.mode === 'SUMMARY') {
-                    if (k === 'ArrowRight') { if (this.focus < 3) this.focus++; else Game.navSummary(1); }
-                    if (k === 'ArrowLeft') { if (this.focus > 0) this.focus--; else Game.navSummary(-1); }
-                    if (k === 'ArrowDown') Game.navSummary(1);
-                    if (k === 'ArrowUp') Game.navSummary(-1);
-                    if (k === 'z' || k === 'Z' || k === 'Enter') document.querySelectorAll('.sum-buttons .confirm-btn')[this.focus].click();
+                // 3. Delegate to Specific Handler
+                if (this.handlers[this.mode]) {
+                    this.handlers[this.mode](k);
+                    this.updateVisuals();
                 }
-                this.updateVisuals();
             }
         };
 
@@ -3944,52 +4004,41 @@
 
             partyStats() { this.closeContext(); this.openSummary(this.party[this.selectedPartyIndex], this.state); },
 
-            distributeExp(amount, targetIndices, isBossReward) {
-                const queue = targetIndices;
-
-                // The logic to process individual pokemon
-                const processQueue = () => {
-                    const processNext = (index) => {
-                        if (index >= queue.length) { this.finishWin(); return; }
-
-                        const pIndex = queue[index];
-                        const p = this.party[pIndex];
-
-                        if (!p || p.currentHp <= 0) { processNext(index + 1); return; }
-
-                        // Define what happens for this specific pokemon
-                        const applyExpLogic = async () => {
-                            if (pIndex === this.activeSlot) {
-                                await this.gainExpAnim(amount, p);
-                            } else {
-                                p.exp += amount;
-                                if (p.exp >= p.nextLvlExp) {
-                                    await this.processLevelUp(p);
-                                }
-                            }
-                            processNext(index + 1);
-                        };
-
-                        // UI Branch:
-                        // If Boss Reward, we skip the "Gained 50 Exp" text for every single pokemon
-                        // and go straight to the logic (animation/level up checks).
-                        if (isBossReward) {
-                            applyExpLogic();
-                        } else {
-                            Battle.typeText(`${p.name} gained\n${amount} EXP. Points!`, applyExpLogic);
-                        }
-                    };
-                    processNext(0);
-                };
-
-                // Entry Point:
+            async distributeExp(amount, targetIndices, isBossReward) {
+                // 1. Global Message
                 if (isBossReward) {
-                    // Show one big message for the whole team first
                     AudioEngine.playSfx('exp');
-                    Battle.typeText(`The team gained\n${amount} EXP. Points!`, processQueue);
-                } else {
-                    processQueue();
+                    await Battle.typeText(`The team gained\n${amount} EXP. Points!`);
                 }
+
+                // 2. Loop through targets sequentially
+                for (const index of targetIndices) {
+                    const p = this.party[index];
+                    if (!p || p.currentHp <= 0) continue;
+
+                    // Visuals for the active Pokemon
+                    if (index === this.activeSlot) {
+                        if (!isBossReward) {
+                            // If not boss, we show individual text per mon
+                            await Battle.typeText(`${p.name} gained\n${amount} EXP. Points!`);
+                        }
+                        // Run the bar filling animation
+                        await this.gainExpAnim(amount, p);
+                    }
+                    // Logic for background Pokemon
+                    else {
+                        if (!isBossReward) {
+                            await Battle.typeText(`${p.name} gained\n${amount} EXP. Points!`);
+                        }
+                        p.exp += amount;
+                        if (p.exp >= p.nextLvlExp) {
+                            await this.processLevelUp(p);
+                        }
+                    }
+                }
+
+                // 3. Done
+                this.finishWin();
             },
 
             gainExpAnim(amount, p) {
@@ -4008,51 +4057,38 @@
             },
 
             processLevelUp(p) {
-                return new Promise(resolve => {
+                return new Promise(async (resolve) => {
                     const startLvl = p.level;
 
-                    // Multi-Level Loop
+                    // 1. Math Phase
                     while (p.exp >= p.nextLvlExp) {
                         p.exp -= p.nextLvlExp;
                         p.level++;
                         p.nextLvlExp = Math.pow(p.level + 1, 3) - Math.pow(p.level, 3);
                     }
 
-                    // Recalculate Stats
-                    const oldMax = p.maxHp;
-                    const calcStat = (base, lvl) => Math.floor((2 * base * lvl) / 100 + 5);
-                    const calcHp = (base, lvl) => Math.floor((2 * base * lvl) / 100 + lvl + 10);
+                    // 2. Stat Update Phase (Using the new helper)
+                    StatCalc.recalculate(p);
 
-                    p.stats.atk = calcStat(p.baseStats.atk, p.level);
-                    p.stats.def = calcStat(p.baseStats.def, p.level);
-                    p.stats.spa = calcStat(p.baseStats.spa, p.level);
-                    p.stats.spd = calcStat(p.baseStats.spd, p.level);
-                    p.stats.spe = calcStat(p.baseStats.spe, p.level);
-                    p.stats.hp = calcHp(p.baseStats.hp, p.level);
-
-                    p.maxHp = p.stats.hp;
-                    p.currentHp += (p.maxHp - oldMax);
-
+                    // 3. Audio/Visual Phase
                     AudioEngine.playSfx('levelup');
 
-                    // --- NEW: HUD FLASH ANIMATION ---
-                    // Only flash if this pokemon is currently on screen
                     if (this.activeSlot === this.party.indexOf(p)) {
                         const hud = document.getElementById('player-hud');
-                        hud.classList.remove('hud-flash-blue'); // Reset
-                        void hud.offsetWidth; // Force reflow
-                        hud.classList.add('hud-flash-blue');    // Trigger
+                        hud.classList.remove('hud-flash-blue');
+                        void hud.offsetWidth;
+                        hud.classList.add('hud-flash-blue');
+                        Battle.updateHUD(p, 'player');
                     }
-                    // --------------------------------
 
+                    // 4. Text Phase
                     const levelsGained = p.level - startLvl;
-                    let msg = `${p.name} grew to Level ${p.level}!`;
-                    if (levelsGained > 1) msg = `${p.name} grew all the way\nto Level ${p.level}!`;
+                    const msg = (levelsGained > 1)
+                        ? `${p.name} grew all the way\nto Level ${p.level}!`
+                        : `${p.name} grew to Level ${p.level}!`;
 
-                    Battle.typeText(msg, () => {
-                        if (this.activeSlot === this.party.indexOf(p)) Battle.updateHUD(p, 'player');
-                        resolve();
-                    });
+                    await Battle.typeText(msg);
+                    resolve();
                 });
             },
 
@@ -4295,6 +4331,103 @@
 
             // --- HELPER: FORCE REFLOW ---
             forceReflow(el) { void el.offsetWidth; },
+
+
+
+            // --- NEW HELPERS TO PASTE INSIDE Battle { ... } ---
+
+            // 1. Standardized Visual Hit (Handles sprites, sounds, invisible checks, and sub flipping)
+            async triggerHitAnim(target, moveType = 'normal') {
+                const isPlayer = (target === this.p);
+                const sprite = isPlayer ? document.getElementById('player-sprite') : document.getElementById('enemy-sprite');
+                const isInvisible = !!target.volatiles.invulnerable;
+
+                // 1. Audio
+                // Map specific status types to sounds, default to damage
+                const sfx = (moveType === 'paralysis') ? 'electric' : (['burn', 'poison'].includes(moveType) ? 'damage' : moveType);
+                // If it's a move type (fire/water), play that, otherwise default damage
+                if (SFX_LIB[sfx] || ['fire', 'water', 'ice', 'grass', 'electric', 'psychic'].includes(sfx)) AudioEngine.playSfx(sfx);
+                else AudioEngine.playSfx('damage');
+
+                // 2. Screen Flash (Type specific)
+                if (['fire', 'water', 'ice', 'grass', 'electric', 'psychic'].includes(moveType)) {
+                    const scene = document.getElementById('scene');
+                    scene.classList.remove(`fx-${moveType}`);
+                    this.forceReflow(scene);
+                    scene.classList.add(`fx-${moveType}`);
+                    // We don't await the screen flash here, we let it play in parallel with the hit
+                    setTimeout(() => scene.classList.remove(`fx-${moveType}`), 600);
+                }
+
+                // 3. Sprite Shake (Skip if Digging/Flying)
+                if (!isInvisible) {
+                    // Check if it is a Substitute (Doll) on the player side to flip the shake animation
+                    const isFlipped = sprite.classList.contains('sub-back');
+                    const hitClass = isFlipped ? 'anim-hit-flipped' : 'anim-hit';
+
+                    sprite.classList.remove('anim-hit', 'anim-hit-flipped');
+                    this.forceReflow(sprite);
+                    sprite.classList.add(hitClass);
+
+                    await wait(400); // Wait for shake to finish
+                    sprite.classList.remove(hitClass);
+                } else {
+                    await wait(200); // Small delay even if invisible
+                }
+            },
+
+            // 2. Standardized Damage Application
+            async applyDamage(target, amount, type = 'normal') {
+                // A. Handle Substitute
+                if (target.volatiles.substituteHP > 0 && type !== 'recoil' && type !== 'poison' && type !== 'burn') {
+                    target.volatiles.substituteHP -= amount;
+                    await this.triggerHitAnim(target, type); // Hit the doll
+                    await this.typeText("The SUBSTITUTE took\ndamage for it!");
+
+                    // Check Break
+                    if (target.volatiles.substituteHP <= 0) {
+                        target.volatiles.substituteHP = 0;
+                        AudioEngine.playSfx('damage');
+
+                        // Poof back logic
+                        const isPlayer = (target === this.p);
+                        const realSrc = target.volatiles.originalSprite || (isPlayer ? target.backSprite : target.frontSprite);
+                        const animPromise = this.performVisualSwap(target, realSrc, false, isPlayer);
+                        const textPromise = this.typeText("The SUBSTITUTE\nfaded!");
+                        target.volatiles.originalSprite = null;
+                        await Promise.all([animPromise, textPromise]);
+                    }
+                    return;
+                }
+
+                // B. Handle Real HP
+                await this.triggerHitAnim(target, type); // Visuals
+                target.currentHp -= amount; // Math
+                this.updateHUD(target, target === this.p ? 'player' : 'enemy'); // UI
+            },
+
+
+            // Standardized Healing Logic
+            async applyHeal(target, amount, messageOverride = null) {
+                if (target.currentHp >= target.maxHp) return false;
+
+                const oldHp = target.currentHp;
+                target.currentHp = Math.min(target.maxHp, target.currentHp + amount);
+                const healedAmt = target.currentHp - oldHp;
+
+                // Visuals
+                AudioEngine.playSfx('heal');
+                this.updateHUD(target, target === this.p ? 'player' : 'enemy');
+
+                // Text
+                // Pass 'false' as messageOverride to skip text (for silent heals)
+                if (messageOverride !== false) {
+                    const msg = messageOverride || `${target.name} regained\nhealth!`;
+                    await this.typeText(msg);
+                }
+
+                return healedAmt;
+            },
 
             // --- VISUALS ---
             spawnSmoke(x, y) {
@@ -4705,12 +4838,12 @@
             async checkCanMove(mon, isPlayer) {
                 // 0. FLINCH (Volatile - resets immediately)
                 if (mon.volatiles.flinch) {
-                    mon.volatiles.flinch = false; // Consumed
+                    mon.volatiles.flinch = false;
                     await this.typeText(`${mon.name} flinched!`);
                     return false;
                 }
 
-                // 1. Freeze
+                // 1. FREEZE
                 if (mon.status === 'frz') {
                     if (Math.random() < 0.2) {
                         mon.status = null;
@@ -4721,7 +4854,8 @@
                     await this.typeText(`${mon.name} is\nfrozen solid!`);
                     return false;
                 }
-                // 2. Sleep
+
+                // 2. SLEEP
                 if (mon.status === 'slp') {
                     mon.volatiles.sleepTurns = (mon.volatiles.sleepTurns || Math.floor(Math.random() * 3) + 1) - 1;
                     if (mon.volatiles.sleepTurns <= 0) {
@@ -4733,13 +4867,14 @@
                     await this.typeText(`${mon.name} is\nfast asleep!`);
                     return false;
                 }
-                // 3. Paralysis
+
+                // 3. PARALYSIS
                 if (mon.status === 'par' && Math.random() < 0.25) {
                     await this.typeText(`${mon.name} is paralyzed!\nIt can't move!`);
                     return false;
                 }
 
-                // 4. Confusion
+                // 4. CONFUSION
                 if (mon.volatiles.confused > 0) {
                     mon.volatiles.confused--;
                     if (mon.volatiles.confused === 0) {
@@ -4747,94 +4882,68 @@
                         await this.typeText(`${mon.name} snapped\nout of confusion!`);
                         return true;
                     }
+
                     await this.typeText(`${mon.name} is\nconfused!`);
+
+                    // 33% chance to hit self
                     if (Math.random() < 0.33) {
                         await this.typeText("It hurt itself in\nits confusion!");
+
+                        // Standard Gen 2 Confusion Damage Formula (Power 40)
                         const dmg = Math.floor((((2 * mon.level / 5 + 2) * 40 * mon.stats.atk / mon.stats.def) / 50) + 2);
-                        mon.currentHp -= dmg;
-                        this.updateHUD(mon, isPlayer ? 'player' : 'enemy');
-                        AudioEngine.playSfx('damage');
-                        const sprite = isPlayer ? document.getElementById('player-sprite') : document.getElementById('enemy-sprite');
-                        sprite.classList.add('anim-hit');
-                        await wait(400);
-                        sprite.classList.remove('anim-hit');
+
+                        // USE HELPER: This handles sound, shake, HP update, and HUD flash
+                        await this.applyDamage(mon, dmg, 'normal');
+
                         return false;
                     }
                 }
+
                 return true;
             },
 
             // 2. Apply End of Turn Damage (Burn/Poison/Weather effects)
             async processEndTurnEffects(mon, isPlayer) {
                 if (mon.currentHp <= 0) return;
-
-                const sprite = isPlayer ? document.getElementById('player-sprite') : document.getElementById('enemy-sprite');
                 const isInvisible = !!mon.volatiles.invulnerable;
 
-                // 1. WEATHER DAMAGE (Sandstorm / Hail)
+                // 1. WEATHER DAMAGE
                 if (this.weather.type === 'sand' || this.weather.type === 'hail') {
                     let takesDamage = true;
-
-                    // Immunity Logic
-                    if (this.weather.type === 'sand') {
-                        if (mon.types.includes('rock') || mon.types.includes('ground') || mon.types.includes('steel')) takesDamage = false;
-                    }
-                    if (this.weather.type === 'hail') {
-                        if (mon.types.includes('ice')) takesDamage = false;
-                    }
+                    // Immunity checks
+                    if (this.weather.type === 'sand' && (mon.types.includes('rock') || mon.types.includes('ground') || mon.types.includes('steel'))) takesDamage = false;
+                    if (this.weather.type === 'hail' && mon.types.includes('ice')) takesDamage = false;
 
                     if (takesDamage) {
                         await wait(400);
-
-                        // Text
                         const msg = this.weather.type === 'sand' ? "is buffeted\nby the sandstorm!" : "is pelted\nby hail!";
                         await this.typeText(`${mon.name} ${msg}`);
 
-                        // Visuals
-                        AudioEngine.playSfx('damage');
-                        if (!isInvisible) {
-                            sprite.classList.add('anim-hit');
-                            await wait(300);
-                            sprite.classList.remove('anim-hit');
-                        }
-
-                        // Damage (1/16th of max HP)
                         const dmg = Math.max(1, Math.floor(mon.maxHp / 16));
-                        mon.currentHp -= dmg;
-                        this.updateHUD(mon, isPlayer ? 'player' : 'enemy');
-
-                        if (mon.currentHp <= 0) return; // Stop if fainted
+                        // Use Helper (weather type triggers standard damage sound)
+                        await this.applyDamage(mon, dmg, 'normal');
+                        if (mon.currentHp <= 0) return;
                     }
                 }
 
-                // 2. MAJOR STATUS DAMAGE (Burn/Poison)
+                // 2. STATUS DAMAGE
                 if (mon.status === 'brn' || mon.status === 'psn') {
                     await wait(400);
 
-                    const animClass = mon.status === 'brn' ? 'status-anim-brn' : 'status-anim-psn';
-
-                    // Status Specific Flash (SKIP IF INVISIBLE)
+                    // Visual Status Flash (Purple/Red silhouette)
                     if (!isInvisible) {
+                        const animClass = mon.status === 'brn' ? 'status-anim-brn' : 'status-anim-psn';
+                        const sprite = isPlayer ? document.getElementById('player-sprite') : document.getElementById('enemy-sprite');
                         sprite.classList.add(animClass);
                         await wait(600);
                         sprite.classList.remove(animClass);
-                    } else {
-                        await wait(200);
                     }
-
-                    AudioEngine.playSfx('damage');
-                    if (!isInvisible) sprite.classList.add('anim-hit');
 
                     await this.typeText(`${mon.name} ${STATUS_DATA[mon.status].msg}`);
 
                     const dmg = Math.floor(mon.maxHp / 8);
-                    mon.currentHp -= Math.max(1, dmg);
-                    this.updateHUD(mon, isPlayer ? 'player' : 'enemy');
-
-                    if (!isInvisible) {
-                        await wait(500);
-                        sprite.classList.remove('anim-hit');
-                    }
+                    // Use Helper (pass 'burn' or 'poison' to trigger specific logic/sounds if needed)
+                    await this.applyDamage(mon, Math.max(1, dmg), mon.status === 'brn' ? 'burn' : 'poison');
                 }
             },
 
@@ -5267,26 +5376,72 @@
 
             async processItem(itemKey) {
                 const data = ITEMS[itemKey];
-                await this.typeText(`You threw a\n${data.name}!`);
 
-                Game.inventory[itemKey]--;
+                // 1. Decrement Inventory
+                if (Game.inventory[itemKey] > 0) {
+                    Game.inventory[itemKey]--;
+                } else {
+                    // Safety catch if UI didn't block it
+                    await this.typeText("You don't have any!");
+                    return 'CONTINUE';
+                }
 
+                // 2. Logic Switch based on Item Type
+
+                // --- POKEBALLS ---
                 if (data.type === 'ball') {
-                    if (this.e.isBoss && itemKey !== 'masterball') {
-                        let deflectChance = (this.e.rageLevel || 0) * 0.20;
-                        if (this.e.rageLevel > 0 && Math.random() < deflectChance) {
-                            await wait(500);
-                            AudioEngine.playSfx('clank');
-                            document.getElementById('enemy-sprite').classList.add('anim-deflect');
-                            await wait(300);
-                            document.getElementById('enemy-sprite').classList.remove('anim-deflect');
-                            await this.typeText("The BOSS deflected\nthe Ball!");
-                            return 'CONTINUE';
-                        }
-                    }
+                    await this.typeText(`You threw a\n${data.name}!`);
                     return await this.attemptCatch(itemKey);
                 }
+
+                // --- HEALING ITEMS (Potions) ---
+                else if (data.type === 'heal') {
+                    await this.typeText(`You used a\n${data.name}!`);
+                    await this.applyHeal(this.p, data.heal);
+                }
+
+                // --- STATUS HEALS (Future Proofing for Full Heals/Antidotes) ---
+                // You can add { type: 'status_heal', condition: 'psn' } to your ITEMS list later
+                else if (data.type === 'status_heal') {
+                    await this.typeText(`You used a\n${data.name}!`);
+                    if (this.p.status === data.condition || data.condition === 'all') {
+                        this.p.status = null;
+                        this.updateHUD(this.p, 'player');
+                        AudioEngine.playSfx('heal');
+                        await this.typeText(`${this.p.name} was\ncured!`);
+                    } else {
+                        await this.typeText("It had no effect.");
+                    }
+                }
+
+                // --- BATTLE STAT BOOSTERS (Future Proofing for X Attack, etc) ---
+                // You can add { type: 'buff', stat: 'atk', val: 1 } to your ITEMS list later
+                else if (data.type === 'buff') {
+                    await this.typeText(`You used an\n${data.name}!`);
+                    await this.applyStatChanges(this.p, [{ stat: { name: data.stat }, change: data.val }], true);
+                }
+
+                // --- REVIVES (Fails on active Pokemon) ---
+                else if (data.type === 'revive') {
+                    await this.typeText(`You used a\n${data.name}!`);
+                    await this.typeText("But it failed!");
+                    // Optional: Refund item if failed
+                    Game.inventory[itemKey]++;
+                }
+
                 return 'CONTINUE';
+            },
+
+
+            getTypeEffectiveness(moveType, targetTypes) {
+                let mod = 1;
+                targetTypes.forEach(t => {
+                    // Safe check for the type chart
+                    if (TYPE_CHART[moveType] && TYPE_CHART[moveType][t] !== undefined) {
+                        mod *= TYPE_CHART[moveType][t];
+                    }
+                });
+                return mod;
             },
 
             async attemptCatch(ballKey) {
@@ -5716,79 +5871,21 @@
 
             // 3. THE BRAWLER: Handles Visuals, Audio, and HP for ONE hit
             async resolveSingleHit(attacker, defender, move, damage, isPlayer, isFirstHit, result) {
-                const isTargetPlayer = !isPlayer;
-
-                const targetSprite = isPlayer ? document.getElementById('enemy-sprite') : document.getElementById('player-sprite');
-                const attackerSprite = isPlayer ? document.getElementById('player-sprite') : document.getElementById('enemy-sprite');
-                const isInvisible = !!defender.volatiles.invulnerable;
-
-                // Audio & FX
-                AudioEngine.playSfx(move.type);
-                const scene = document.getElementById('scene');
-                scene.classList.remove(`fx-${move.type}`);
-                this.forceReflow(scene);
-                scene.classList.add(`fx-${move.type}`);
-                await wait(600);
-                scene.classList.remove(`fx-${move.type}`);
-
-                // Hit Animation (FIXED FOR SUB DOLL)
-                if (!isInvisible) {
-                    const hitClass = targetSprite.classList.contains('sub-back') ? 'anim-hit-flipped' : 'anim-hit';
-                    targetSprite.classList.remove('anim-hit', 'anim-hit-flipped');
-                    this.forceReflow(targetSprite);
-                    targetSprite.classList.add(hitClass);
-                }
-
+                // 1. Initial Audio Cues (Crit/Super Effective)
                 if (isFirstHit) {
                     if (result.isCrit) AudioEngine.playSfx('crit');
                     else if (result.eff > 1) AudioEngine.playSfx('super_effective');
                     else if (result.eff < 1) AudioEngine.playSfx('not_very_effective');
-                    else AudioEngine.playSfx('damage');
-                } else { AudioEngine.playSfx('damage'); }
-
-                if (!isInvisible) {
-                    await wait(400);
-                    targetSprite.classList.remove('anim-hit', 'anim-hit-flipped');
-                } else {
-                    await wait(200);
                 }
 
-                // --- SUBSTITUTE DAMAGE LOGIC ---
-                if (typeof defender.volatiles.substituteHP === 'number' && defender.volatiles.substituteHP > 0) {
-                    defender.volatiles.substituteHP -= damage;
-                    await this.typeText("The SUBSTITUTE took\ndamage for it!");
+                // 2. Apply the Damage (Handles Sprite Shake, Substitute, HP Update, HUD)
+                await this.applyDamage(defender, damage, move.type);
 
-                    // Break Check
-                    if (defender.volatiles.substituteHP <= 0) {
-                        defender.volatiles.substituteHP = 0;
-
-                        AudioEngine.playSfx('damage');
-
-                        // FIX: Trigger Animation Concurrent with Text
-                        // 1. Start the visual swap (Poof back to real mon)
-                        // We use the stored original sprite, or fallback to default
-                        const realSrc = defender.volatiles.originalSprite || (isTargetPlayer ? defender.backSprite : defender.frontSprite);
-
-                        const animPromise = this.performVisualSwap(defender, realSrc, false, isTargetPlayer);
-                        defender.volatiles.originalSprite = null;
-
-                        // 2. Start the text
-                        const textPromise = this.typeText("The SUBSTITUTE\nfaded!");
-
-                        // 3. Wait for both
-                        await Promise.all([animPromise, textPromise]);
-                    }
-                    return;
-                }
-
-                // Apply Real Damage
-                defender.currentHp -= damage;
-                this.updateHUD(defender, isPlayer ? 'enemy' : 'player');
-
-                // Rage
+                // 3. Handle Rage Building
                 if (defender.currentHp > 0 && defender.rageLevel !== undefined && defender.rageLevel < 3) {
                     let chance = GAME_BALANCE.RAGE_TRIGGER_CHANCE;
                     if ((defender.currentHp / defender.maxHp) < 0.5) chance += 0.25;
+
                     if (Math.random() < chance) {
                         defender.rageLevel++;
                         this.updateHUD(defender, isPlayer ? 'enemy' : 'player');
@@ -5797,37 +5894,37 @@
                     }
                 }
 
-                // Recoil/Drain
+                // 4. Handle Draining / Recoil
                 if (move.meta && move.meta.drain) {
                     await wait(500);
                     const amount = Math.max(1, Math.floor(damage * (Math.abs(move.meta.drain) / 100)));
+
                     if (move.meta.drain < 0) {
-                        attacker.currentHp -= amount;
-                        this.updateHUD(attacker, isPlayer ? 'player' : 'enemy');
-                        AudioEngine.playSfx('damage');
+                        // Recoil
                         await this.typeText(`${attacker.name} is hit\nwith recoil!`);
+                        await this.applyDamage(attacker, amount, 'recoil'); // Use helper!
                     } else {
-                        attacker.currentHp = Math.min(attacker.maxHp, attacker.currentHp + amount);
-                        this.updateHUD(attacker, isPlayer ? 'player' : 'enemy');
-                        AudioEngine.playSfx('heal');
-                        await this.typeText(`${defender.name} had its\nenergy drained!`);
+                        // Drain Heal
+                        // We pass the custom text as the 3rd argument
+                        await this.applyHeal(attacker, amount, `${defender.name} had its\nenergy drained!`);
                     }
                 }
             },
+
+
+
             // 4. THE RAGE HANDLER: Handles angry Pokemon attacking again
             async handleAttackerRage(attacker, defender, move, baseDmg, isPlayer) {
                 const rage = attacker.rageLevel || 0;
                 if (attacker.currentHp <= 0 || rage === 0) return;
 
+                // Determine bonus hits based on Rage Level
                 let extraHits = 0;
                 if (Math.random() < (rage * GAME_BALANCE.RAGE_MULTIHIT_BASE)) {
                     extraHits = (rage === 3 && Math.random() < 0.5) ? 2 : 1;
                 }
 
                 if (extraHits > 0) {
-                    const targetSprite = isPlayer ? document.getElementById('enemy-sprite') : document.getElementById('player-sprite');
-                    const attackerSprite = isPlayer ? document.getElementById('player-sprite') : document.getElementById('enemy-sprite');
-
                     for (let j = 0; j < extraHits; j++) {
                         if (defender.currentHp <= 0 || attacker.currentHp <= 0) break;
 
@@ -5836,70 +5933,60 @@
                         await this.typeText(`${attacker.name} is\n${msg}`);
                         await this.typeText(`${attacker.name} used\n${move.name} again!`);
 
+                        // Calculate reduced damage for extra hits
                         const dmgMod = (j === 0) ? 0.8 : 0.5;
                         const extraDmg = Math.max(1, Math.floor(baseDmg * dmgMod));
 
-                        // Simple Hit Visual
-                        targetSprite.classList.add('anim-hit');
-                        AudioEngine.playSfx('damage');
-                        await wait(300);
-                        targetSprite.classList.remove('anim-hit');
-
-                        defender.currentHp -= extraDmg;
-                        this.updateHUD(defender, isPlayer ? 'enemy' : 'player');
+                        // USE HELPER: Handles the hit on the defender
+                        await this.applyDamage(defender, extraDmg, move.type);
 
                         // Rage Recoil Check
                         if (Math.random() < GAME_BALANCE.RAGE_RECOIL_CHANCE) {
                             await wait(500);
-                            const recoil = Math.max(1, Math.floor(baseDmg * GAME_BALANCE.RAGE_RECOIL_DMG));
-                            attacker.currentHp -= recoil;
-                            this.updateHUD(attacker, isPlayer ? 'player' : 'enemy');
-
-                            attackerSprite.classList.add('anim-hit');
-                            AudioEngine.playSfx('damage');
                             await this.typeText(`${attacker.name} is hit\nwith recoil!`);
-                            await wait(200);
-                            attackerSprite.classList.remove('anim-hit');
+                            const recoil = Math.max(1, Math.floor(baseDmg * GAME_BALANCE.RAGE_RECOIL_DMG));
+
+                            // USE HELPER: Handles the recoil on the attacker
+                            await this.applyDamage(attacker, recoil, 'recoil');
                         }
                     }
                 }
             },
 
             // 5. THE SIDE-EFFECTS HANDLER: Stats, Status, and Weather
-            async handleStatusMove(attacker, defender, move) {
-                // 1. Type Immunity Check
-                let typeMod = 1;
-                defender.types.forEach(defType => {
-                    if (TYPE_CHART[move.type] && TYPE_CHART[move.type][defType] !== undefined) {
-                        typeMod *= TYPE_CHART[move.type][defType];
-                    }
-                });
 
-                // If type effectiveness is 0, the status move fails immediately.
+            async handleStatusMove(attacker, defender, move) {
+                // 1. TYPE IMMUNITY CHECK (Use new Helper)
+                // Example: Thunder Wave (Electric) vs Ground type = 0 effectiveness
+                const typeMod = this.getTypeEffectiveness(move.type, defender.types);
+
                 if (typeMod === 0) {
                     await this.typeText("It had no effect!");
                     return 'IMMUNE';
                 }
 
-                // 2. CHECK MOVE_DEX (Custom Logic like Transform, Rest, Spider Web)
+                // 2. CHECK MOVE_DEX (Unique Logic)
+                // Handles specific script logic for Transform, Substitute, Rest, etc.
                 const special = MOVE_DEX[move.name];
                 if (special && special.isUnique) {
-                    // If the unique logic returns true, we consider it a success.
-                    // If false (e.g. Yawn on existing status), it returns 'FAIL'.
+                    // Run the custom function. If it returns true, success.
+                    // If it returns false (e.g. Yawn when already asleep), return 'FAIL'.
                     return await special.onHit(this, attacker, defender) ? true : 'FAIL';
                 }
 
-                // 3. WEATHER (Standard)
+                // 3. WEATHER MOVES
                 const wMoves = { 'SUNNY DAY': 'sun', 'RAIN DANCE': 'rain', 'SANDSTORM': 'sand', 'HAIL': 'hail' };
                 if (wMoves[move.name]) {
                     AudioEngine.playSfx('swoosh');
                     await wait(300);
                     this.setWeather(wMoves[move.name]);
                     await wait(1500);
-                    return true; // Successfully changed weather
+                    return true; // Success (did something)
                 }
 
-                // Return false implies "Standard Status Move" -> Proceed to side effects to apply status
+                // 4. FALLTHROUGH
+                // If we reach here, it's a standard status move (like Growl or Poison Powder).
+                // Returning false tells the engine: "Go ahead and check handleMoveSideEffects to apply the stats/status."
                 return false;
             },
 
@@ -6004,69 +6091,71 @@
                 else Game.handleWin(false);
             },
 
-            calcDamage(attacker, defender, move) {
-                // 1. TYPE EFFECTIVENESS
-                let typeMod = 1;
-                defender.types.forEach(defType => {
-                    if (TYPE_CHART[move.type] && TYPE_CHART[move.type][defType] !== undefined) {
-                        typeMod *= TYPE_CHART[move.type][defType];
-                    }
-                });
 
+            calcDamage(attacker, defender, move) {
+                // 1. TYPE EFFECTIVENESS (Use new Helper)
+                const typeMod = this.getTypeEffectiveness(move.type, defender.types);
                 if (typeMod === 0) return { damage: 0, desc: null, eff: 0 };
 
-                // 2. CHECK MOVE_DEX (Unique Logic)
+                // 2. SPECIAL MOVE LOGIC (Fixed Damage, OHKO, etc from MOVE_DEX)
                 const special = MOVE_DEX[move.name];
                 if (special) {
-                    // Fixed
                     if (special.fixedDamage) return { damage: special.fixedDamage, desc: null, eff: 1, isCrit: false };
-
-                    // Dynamic (Level/HP based)
                     if (special.damageCallback) return { damage: special.damageCallback(attacker, defender), desc: null, eff: 1, isCrit: false };
-
-                    // OHKO
                     if (special.ohko) {
                         if (defender.level > attacker.level) return { damage: 0, desc: "failed", eff: 0 };
                         return { damage: defender.currentHp, desc: "It's a One-Hit KO!", eff: 1, isCrit: false };
                     }
                 }
 
-                // 3. STANDARD CALCULATION (The Fallthrough)
-                if (move.power === 0 || !move.power) return { damage: 0, desc: "failed", eff: typeMod };
+                // 3. BASE POWER CHECK
+                if (!move.power) return { damage: 0, desc: "failed", eff: typeMod };
 
+                // 4. STAT CALCULATION (Attacker vs Defender)
                 const isSpecial = move.category === 'special';
 
+                // Select correct stats
                 let A = isSpecial ? attacker.stats.spa : attacker.stats.atk;
                 let D = isSpecial ? defender.stats.spd : defender.stats.def;
 
+                // Select correct stages
                 const atkStage = isSpecial ? attacker.stages.spa : attacker.stages.atk;
                 const defStage = isSpecial ? defender.stages.spd : defender.stages.def;
 
+                // Apply Stage Multipliers
                 A = Math.floor(A * STAGE_MULT[atkStage]);
                 D = Math.floor(D * STAGE_MULT[defStage]);
 
+                // Burn Check (Halves physical attack)
                 if (attacker.status === 'brn' && !isSpecial) A = Math.floor(A * 0.5);
 
+                // 5. THE DAMAGE FORMULA (Gen 2 Approximation)
                 let dmg = Math.floor(Math.floor(Math.floor(2 * attacker.level / 5 + 2) * move.power * A / D) / 50) + 2;
+
+                // 6. MODIFIERS
+                // STAB
                 if (attacker.types.includes(move.type)) dmg = Math.floor(dmg * 1.5);
+
+                // Type Effectiveness
                 dmg = Math.floor(dmg * typeMod);
 
-                // Crit Logic
+                // Critical Hit
                 let isCrit = false;
-                let critRate = (move.meta && move.meta.crit_rate) ? move.meta.crit_rate : 0;
-                let critChance = 0.0625;
-                if (critRate === 1) critChance = 0.125;
-                if (critRate >= 2) critChance = 0.50;
-
+                let critChance = 0.0625; // 1/16
+                if (move.meta && move.meta.crit_rate >= 1) critChance = 0.125;
+                if (move.meta && move.meta.crit_rate >= 2) critChance = 0.50;
                 if (attacker.isBoss) critChance = Math.max(critChance, GAME_BALANCE.CRIT_CHANCE_BOSS);
 
                 if (Math.random() < critChance) { isCrit = true; dmg *= 2; }
 
+                // Random Variance (0.85 to 1.0)
                 const variance = GAME_BALANCE.DAMAGE_VARIANCE_MIN + Math.random() * (GAME_BALANCE.DAMAGE_VARIANCE_MAX - GAME_BALANCE.DAMAGE_VARIANCE_MIN);
                 dmg = Math.floor(dmg * variance);
 
+                // Ensure at least 1 dmg if effective
                 if (typeMod > 0 && dmg < 1) dmg = 1;
 
+                // 7. BUILD RESULT
                 let msg = null;
                 if (typeMod > 1) msg = "It's super\neffective!";
                 else if (typeMod < 1) msg = "It's not very\neffective...";
