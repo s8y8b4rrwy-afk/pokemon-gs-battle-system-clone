@@ -1957,6 +1957,25 @@
         body.retro-motion #lcd-overlay {
             transition-timing-function: ease !important;
         }
+
+        /* --- CUSTOM SCROLLBARS (Retro Style) --- */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #eee;
+            border-left: 2px solid #202020;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border: 1px solid #202020;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
     </style>
 </head>
 
@@ -2080,31 +2099,47 @@
             <div class="scene hidden" id="scene">
                 <div id="fx-container"
                     style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none;"></div>
+
+                <!-- ENEMY HUD -->
                 <div class="hud" id="enemy-hud">
-                    <div class="name"><span id="enemy-name">LOADING...</span><span id="aggro-icon"
-                            class="aggro-icon"></span></div>
+                    <div class="name">
+                        <span id="enemy-name">LOADING...</span>
+                        <!-- Pre-baked empty icons for Status and Rage -->
+                        <span id="enemy-status-icon"
+                            style="font-size:8px; font-weight:bold; margin-left:4px; text-shadow:1px 1px 0 #fff; display:none;"></span>
+                        <span id="enemy-rage-icon" class="aggro-icon" style="display:none;"></span>
+                    </div>
                     <div class="level" id="enemy-lvl">Lv15</div>
-                    <div class="hp-box"><span style="margin-right:2px; color:#e6ae27;">HP</span>
+                    <div class="hp-box">
+                        <span style="margin-right:2px; color:#e6ae27;">HP</span>
                         <div class="hp-bar-bg">
                             <div id="enemy-hp-bar" class="hp-fill"></div>
                         </div>
                     </div>
                 </div>
 
-                <!-- REVERTED: No anchor div, just the sprite -->
                 <img id="enemy-sprite" class="sprite" src="" alt="Enemy">
-
                 <img id="player-sprite" class="sprite" src="" alt="Player">
+
+                <!-- PLAYER HUD -->
                 <div class="hud" id="player-hud">
-                    <div class="name"><span id="player-name">LOADING...</span></div>
+                    <div class="name">
+                        <span id="player-name">LOADING...</span>
+                        <!-- Pre-baked empty icons for Status and Rage -->
+                        <span id="player-status-icon"
+                            style="font-size:8px; font-weight:bold; margin-left:4px; text-shadow:1px 1px 0 #fff; display:none;"></span>
+                        <span id="player-rage-icon" class="aggro-icon" style="display:none;"></span>
+                    </div>
                     <div class="level" id="player-lvl">Lv15</div>
-                    <div class="hp-box"><span style="margin-right:2px; color:#e6ae27;">HP</span>
+                    <div class="hp-box">
+                        <span style="margin-right:2px; color:#e6ae27;">HP</span>
                         <div class="hp-bar-bg">
                             <div id="player-hp-bar" class="hp-fill"></div>
                         </div>
                     </div>
                     <div id="player-hp-text">--/--</div>
-                    <div class="exp-box"><span style="font-size:6px; margin-right:1px;">EXP</span>
+                    <div class="exp-box">
+                        <span style="font-size:6px; margin-right:1px;">EXP</span>
                         <div class="exp-bar-bg">
                             <div id="player-exp-bar" class="exp-fill"></div>
                         </div>
@@ -2793,28 +2828,67 @@
             }
         };
 
+        const RNG = {
+            // Returns true if roll is successful (chance 0.0 to 1.0)
+            roll: (chance) => Math.random() < chance,
+
+            // Returns integer between min and max (inclusive)
+            int: (min, max) => Math.floor(Math.random() * (max - min + 1)) + min,
+
+            // Returns a random item from an array
+            pick: (array) => array[Math.floor(Math.random() * array.length)]
+        };
+
         const AudioEngine = {
             ctx: null,
-            lastCryTimeout: null,
-            init() { if (!this.ctx) { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } if (this.ctx.state === 'suspended') this.ctx.resume(); },
+            noiseBuffer: null, // Cache
+
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                    // Generate Noise Buffer ONCE
+                    const dur = 1.0;
+                    const bufSize = this.ctx.sampleRate * dur;
+                    const buf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
+                    const data = buf.getChannelData(0);
+                    for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+                    this.noiseBuffer = buf;
+                }
+                if (this.ctx.state === 'suspended') this.ctx.resume();
+            },
+
             playCry(url) {
                 if (!url) return;
-                if (this.lastCryTimeout) clearTimeout(this.lastCryTimeout);
                 this.init();
                 const a = new Audio(url); a.volume = 0.4; a.play().catch(() => { });
             },
+
             playTone(freq, type, dur, vol, delay) {
-                const t = this.ctx.currentTime + delay; const o = this.ctx.createOscillator(); const g = this.ctx.createGain();
-                o.type = type; o.frequency.value = freq; o.connect(g); g.connect(this.ctx.destination);
-                g.gain.setValueAtTime(vol, t); g.gain.linearRampToValueAtTime(0, t + dur); o.start(t); o.stop(t + dur);
+                const t = this.ctx.currentTime + delay;
+                const o = this.ctx.createOscillator();
+                const g = this.ctx.createGain();
+                o.type = type; o.frequency.value = freq;
+                o.connect(g); g.connect(this.ctx.destination);
+                g.gain.setValueAtTime(vol, t);
+                g.gain.linearRampToValueAtTime(0, t + dur);
+                o.start(t); o.stop(t + dur);
             },
+
             playNoise(dur) {
-                const t = this.ctx.currentTime; const bufSize = this.ctx.sampleRate * dur; const buf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
-                const data = buf.getChannelData(0); for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
-                const noise = this.ctx.createBufferSource(); noise.buffer = buf;
-                const gain = this.ctx.createGain(); gain.gain.setValueAtTime(0.1, t); gain.gain.linearRampToValueAtTime(0, t + dur);
-                noise.connect(gain); gain.connect(this.ctx.destination); noise.start(t);
+                const t = this.ctx.currentTime;
+                const src = this.ctx.createBufferSource();
+                src.buffer = this.noiseBuffer; // Reuse cached buffer
+                // Loop it if duration is longer than 1s (unlikely but safe)
+                src.loop = true;
+
+                const gain = this.ctx.createGain();
+                gain.gain.setValueAtTime(0.1, t);
+                gain.gain.linearRampToValueAtTime(0, t + dur);
+
+                src.connect(gain); gain.connect(this.ctx.destination);
+                src.start(t); src.stop(t + dur);
             },
+
             playSfx(key) {
                 this.init(); const now = this.ctx.currentTime;
 
@@ -2828,34 +2902,25 @@
                 osc.connect(gain); gain.connect(this.ctx.destination);
 
                 switch (key) {
-
                     case 'run':
-                        // Blue Noise Sweep (Escaping sound)
-                        const rBuf = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.4, this.ctx.sampleRate);
-                        const rData = rBuf.getChannelData(0);
-                        for (let i = 0; i < rBuf.length; i++) rData[i] = Math.random() * 2 - 1;
-                        const rSrc = this.ctx.createBufferSource(); rSrc.buffer = rBuf;
+                        // Reuse Noise Buffer for sweep
+                        const rSrc = this.ctx.createBufferSource();
+                        rSrc.buffer = this.noiseBuffer; rSrc.loop = true;
                         const rFilter = this.ctx.createBiquadFilter(); rFilter.type = "lowpass";
                         rFilter.frequency.setValueAtTime(800, now);
-                        rFilter.frequency.linearRampToValueAtTime(100, now + 0.3); // Filter closes down
-                        const rGain = this.ctx.createGain(); rGain.gain.setValueAtTime(0.2, now); rGain.gain.linearRampToValueAtTime(0, now + 0.3);
+                        rFilter.frequency.linearRampToValueAtTime(100, now + 0.3);
+                        const rGain = this.ctx.createGain();
+                        rGain.gain.setValueAtTime(0.2, now); rGain.gain.linearRampToValueAtTime(0, now + 0.3);
                         rSrc.connect(rFilter); rFilter.connect(rGain); rGain.connect(this.ctx.destination);
-                        rSrc.start(now);
+                        rSrc.start(now); rSrc.stop(now + 0.3);
                         break;
 
                     case 'electric':
-                        // BZZT Sound: Sawtooth with rapid frequency modulation
                         osc.type = 'sawtooth';
                         osc.frequency.setValueAtTime(150, now);
-                        osc.frequency.linearRampToValueAtTime(600, now + 0.1); // Zip up
-                        osc.frequency.linearRampToValueAtTime(100, now + 0.3); // Zip down
-
-                        // Rough amplitude (stutter)
-                        gain.gain.setValueAtTime(0.15, now);
-                        gain.gain.setValueAtTime(0, now + 0.05);
-                        gain.gain.setValueAtTime(0.15, now + 0.1);
-                        gain.gain.linearRampToValueAtTime(0, now + 0.3);
-
+                        osc.frequency.linearRampToValueAtTime(600, now + 0.1);
+                        osc.frequency.linearRampToValueAtTime(100, now + 0.3);
+                        gain.gain.setValueAtTime(0.15, now); gain.gain.linearRampToValueAtTime(0, now + 0.3);
                         osc.start(now); osc.stop(now + 0.3);
                         break;
 
@@ -2866,24 +2931,19 @@
                     case 'shiny':
                         this.playTone(SFX_LIB.shiny_1, 'sine', 0.1, 0.1, 0);
                         this.playTone(SFX_LIB.shiny_2, 'sine', 0.2, 0.1, 0.1);
-                        return;
+                        break;
 
                     case 'heal':
-                        [0, 0.1, 0.2, 0.3].forEach((d, i) => {
-                            const ratios = [1, 1.25, 1.5, 2];
-                            this.playTone(SFX_LIB.heal_base * ratios[i], 'sine', 0.1 + (i * 0.05), 0.1, d);
-                        });
-                        return;
+                        [0, 0.1, 0.2, 0.3].forEach((d, i) => this.playTone(SFX_LIB.heal_base * [1, 1.25, 1.5, 2][i], 'sine', 0.1 + (i * 0.05), 0.1, d));
+                        break;
 
                     case 'levelup':
-                        [0, 0.15, 0.3, 0.45].forEach((d, i) => {
-                            const ratios = [1, 1.25, 1.5, 2];
-                            this.playTone(SFX_LIB.levelup_base * ratios[i], 'square', 0.1, 0.1, d);
-                        });
-                        return;
+                        [0, 0.15, 0.3, 0.45].forEach((d, i) => this.playTone(SFX_LIB.levelup_base * [1, 1.25, 1.5, 2][i], 'square', 0.1, 0.1, d));
+                        break;
 
                     case 'funfair':
-                        this.playTone(523.25, 'square', 0.1, 0.1, 0); this.playTone(659.25, 'square', 0.1, 0.1, 0.1); this.playTone(783.99, 'square', 0.1, 0.1, 0.2); this.playTone(1046.50, 'square', 0.2, 0.1, 0.3); return;
+                        this.playTone(523.25, 'square', 0.1, 0.1, 0); this.playTone(659.25, 'square', 0.1, 0.1, 0.1); this.playTone(783.99, 'square', 0.1, 0.1, 0.2); this.playTone(1046.50, 'square', 0.2, 0.1, 0.3);
+                        break;
 
                     case 'error': osc.type = 'sawtooth'; osc.frequency.setValueAtTime(100, now); gain.gain.setValueAtTime(0.3, now); gain.gain.linearRampToValueAtTime(0, now + 0.2); osc.start(now); osc.stop(now + 0.2); break;
                     case 'crit': osc.type = 'square'; osc.frequency.setValueAtTime(80, now); gain.gain.setValueAtTime(0.5, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3); osc.start(now); osc.stop(now + 0.3); break;
@@ -2893,15 +2953,12 @@
                     case 'catch_click': osc.type = 'square'; osc.frequency.setValueAtTime(800, now); gain.gain.setValueAtTime(0.1, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.05); osc.start(now); osc.stop(now + 0.05); break;
 
                     case 'swoosh':
-                        const bBuf = this.ctx.createBuffer(1, this.ctx.sampleRate * 0.3, this.ctx.sampleRate);
-                        const bData = bBuf.getChannelData(0);
-                        for (let i = 0; i < bBuf.length; i++) bData[i] = Math.random() * 2 - 1;
-                        const bSrc = this.ctx.createBufferSource(); bSrc.buffer = bBuf;
+                        const bSrc = this.ctx.createBufferSource(); bSrc.buffer = this.noiseBuffer; bSrc.loop = true;
                         const bFilter = this.ctx.createBiquadFilter(); bFilter.type = "lowpass";
                         bFilter.frequency.setValueAtTime(800, now); bFilter.frequency.linearRampToValueAtTime(100, now + 0.2);
                         const bGain = this.ctx.createGain(); bGain.gain.setValueAtTime(0.1, now); bGain.gain.linearRampToValueAtTime(0, now + 0.2);
                         bSrc.connect(bFilter); bFilter.connect(bGain); bGain.connect(this.ctx.destination);
-                        bSrc.start(now);
+                        bSrc.start(now); bSrc.stop(now + 0.2);
                         break;
 
                     default: osc.type = 'square'; osc.frequency.setValueAtTime(150, now); osc.frequency.exponentialRampToValueAtTime(40, now + 0.1); gain.gain.setValueAtTime(0.1, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1); osc.start(now); osc.stop(now + 0.1); break;
@@ -2911,13 +2968,16 @@
 
         const API = {
             base: 'https://pokeapi.co/api/v2',
+
             async getPokemon(id, level, overrides = {}) {
                 try {
-                    const res = await fetch(`${this.base}/pokemon/${id}`); const data = await res.json();
+                    // 1. Fetch Core Data
+                    const res = await fetch(`${this.base}/pokemon/${id}`);
+                    const data = await res.json();
+
                     const getStat = (n) => data.stats.find(s => s.stat.name === n).base_stat;
 
-                    const isShiny = (overrides.shiny !== undefined && overrides.shiny !== null) ? overrides.shiny : Math.random() < 0.05;
-
+                    // 2. Calculate Stats (Using StatCalc)
                     const stats = {
                         hp: StatCalc.hp(getStat('hp'), level),
                         atk: StatCalc.other(getStat('attack'), level),
@@ -2927,68 +2987,69 @@
                         spe: StatCalc.other(getStat('speed'), level)
                     };
 
-                    // MOVE FETCHING LOGIC
-                    let availableMoves = data.moves.map(m => m.move.name).sort(() => 0.5 - Math.random());
-                    let selectedMoveNames = availableMoves.slice(0, 4);
+                    // 3. Determine Shiny
+                    const isShiny = (overrides.shiny !== undefined && overrides.shiny !== null)
+                        ? overrides.shiny
+                        : (Math.random() < 0.05); // 5% natural chance
 
+                    // 4. Fetch Moves (Optimized: Parallel Fetching)
+                    let selectedMoveNames = [];
                     if (overrides.moves && Array.isArray(overrides.moves)) {
                         selectedMoveNames = overrides.moves;
+                    } else {
+                        // Pick 4 random moves from the pool
+                        const pool = data.moves.map(m => m.move.name).sort(() => 0.5 - Math.random());
+                        selectedMoveNames = pool.slice(0, 4);
                     }
 
-                    const moves = [];
+                    // Fire all requests at once
+                    const movePromises = selectedMoveNames.map(name => this.getMove(name));
+                    const fetchedMoves = await Promise.all(movePromises);
+                    // Filter out any failed fetches (nulls)
+                    const validMoves = fetchedMoves.filter(m => m !== null);
 
-                    for (let name of selectedMoveNames) {
-                        try {
-                            const mRes = await fetch(`${this.base}/move/${name}`);
-                            if (!mRes.ok) continue;
-                            const mData = await mRes.json();
-
-                            moves.push({
-                                name: mData.name.replace('-', ' ').toUpperCase(),
-                                id: mData.name,
-                                type: mData.type.name,
-                                power: mData.power || 0,
-                                accuracy: mData.accuracy || 100,
-                                category: mData.damage_class.name,
-                                priority: mData.priority,
-                                meta: mData.meta || {},
-                                stat_changes: mData.stat_changes || [],
-                                target: mData.target.name,
-                                stat_chance: mData.meta ? mData.meta.stat_chance : 0,
-                                // NEW: Fetch Multi-Hit Data
-                                min_hits: mData.meta ? mData.meta.min_hits : null,
-                                max_hits: mData.meta ? mData.meta.max_hits : null
-                            });
-                        } catch (err) { console.error("Move fetch failed:", name); }
-                    }
-
+                    // 5. Determine Sprites
                     const vCrystal = data.sprites.versions['generation-ii']['crystal'];
-                    const baseExp = data.base_experience || 64;
+                    const front = isShiny ? vCrystal.front_shiny_transparent : vCrystal.front_transparent;
+                    const back = isShiny ? vCrystal.back_shiny_transparent : vCrystal.back_transparent;
+
                     const nextLvlExp = Math.pow(level + 1, 3) - Math.pow(level, 3);
                     const bst = getStat('hp') + getStat('attack') + getStat('defense') + getStat('special-attack') + getStat('special-defense') + getStat('speed');
-                    const highTier = bst > 480;
 
-                    let initStatus = null;
-                    let initStages = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, acc: 0, eva: 0 };
-
-                    if (overrides.status) initStatus = overrides.status;
-                    if (overrides.stages) Object.assign(initStages, overrides.stages);
-
+                    // 6. Assemble Object
                     return {
-                        id: data.id, name: data.name.toUpperCase(), level: level,
-                        maxHp: stats.hp, currentHp: stats.hp, stats: stats,
+                        id: data.id,
+                        name: data.name.toUpperCase(),
+                        level: level,
+                        maxHp: stats.hp,
+                        currentHp: stats.hp,
+                        stats: stats,
                         baseStats: { hp: getStat('hp'), atk: getStat('attack'), def: getStat('defense'), spa: getStat('special-attack'), spd: getStat('special-defense'), spe: getStat('speed') },
-                        exp: 0, nextLvlExp: nextLvlExp, baseExp: baseExp,
-                        status: initStatus, volatiles: {}, stages: initStages,
-                        types: data.types.map(t => t.type.name), moves: moves, isShiny: isShiny,
-                        frontSprite: isShiny ? vCrystal.front_shiny_transparent : vCrystal.front_transparent,
-                        backSprite: isShiny ? vCrystal.back_shiny_transparent : vCrystal.back_transparent,
-                        icon: data.sprites.versions['generation-vii']['icons'].front_default, cry: data.cries.latest, isBoss: false,
-                        failedCatches: 0, rageLevel: 0, isHighTier: highTier
+                        exp: 0,
+                        nextLvlExp: nextLvlExp,
+                        baseExp: data.base_experience || 64,
+                        status: overrides.status || null,
+                        volatiles: {},
+                        stages: Object.assign({ atk: 0, def: 0, spa: 0, spd: 0, spe: 0, acc: 0, eva: 0 }, overrides.stages || {}),
+                        types: data.types.map(t => t.type.name),
+                        moves: validMoves,
+                        isShiny: isShiny,
+                        frontSprite: front,
+                        backSprite: back,
+                        icon: data.sprites.versions['generation-vii']['icons'].front_default,
+                        cry: data.cries.latest,
+                        isBoss: false,
+                        failedCatches: 0,
+                        rageLevel: 0,
+                        isHighTier: bst > 480
                     };
-                } catch (e) { console.error(e); return null; }
+                } catch (e) {
+                    console.error("Pokemon Fetch Error:", e);
+                    return null;
+                }
             },
-            // --- NEW: FETCH SINGLE MOVE (For Metronome) ---
+
+            // Helper to fetch single move (used by getPokemon and Metronome)
             async getMove(idOrName) {
                 try {
                     const res = await fetch(`${this.base}/move/${idOrName}`);
@@ -3011,8 +3072,7 @@
                         max_hits: mData.meta ? mData.meta.max_hits : null
                     };
                 } catch (e) { return null; }
-            },
-
+            }
         };
 
         const Input = {
@@ -3206,11 +3266,127 @@
             }
         };
 
+
+        const StorageSystem = {
+            KEY: 'gs_battler_save',
+
+            save(data) {
+                try {
+                    localStorage.setItem(this.KEY, JSON.stringify(data));
+                    return true;
+                } catch (e) {
+                    console.error("Save Failed:", e);
+                    return false;
+                }
+            },
+
+            load() {
+                const str = localStorage.getItem(this.KEY);
+                if (!str) return null;
+                try {
+                    return JSON.parse(str);
+                } catch (e) {
+                    console.error("Save Corrupted:", e);
+                    return null;
+                }
+            },
+
+            exists() {
+                return !!localStorage.getItem(this.KEY);
+            },
+
+            wipe() {
+                localStorage.removeItem(this.KEY);
+            }
+        };
+
+        const EncounterManager = {
+            // Returns a configuration object to pass to API.getPokemon
+            determineSpecs(party, wins) {
+                // 1. Calculate Scaling Level
+                const levels = party.map(p => p.level);
+                const avgLvl = levels.reduce((a, b) => a + b, 0) / levels.length;
+                const maxLvl = Math.max(...levels);
+                const refLevel = Math.ceil((avgLvl + maxLvl) / 2);
+
+                // 2. Determine Boss Status
+                const isStreak = (wins > 0 && wins % ENCOUNTER_CONFIG.BOSS_STREAK_TRIGGER === 0);
+                const bossRate = isStreak ? ENCOUNTER_CONFIG.BOSS_STREAK_CHANCE : ENCOUNTER_CONFIG.BOSS_CHANCE;
+                let isBoss = RNG.roll(bossRate);
+
+                // 3. Determine Level Range
+                let min, max;
+                if (isBoss) {
+                    min = refLevel + ENCOUNTER_CONFIG.BOSS_LEVEL_MIN;
+                    max = refLevel + ENCOUNTER_CONFIG.BOSS_LEVEL_MAX;
+                } else {
+                    min = Math.max(1, refLevel + ENCOUNTER_CONFIG.WILD_LEVEL_MIN);
+                    max = Math.max(1, refLevel + ENCOUNTER_CONFIG.WILD_LEVEL_MAX);
+                }
+
+                // 4. Build Specs
+                let specs = {
+                    id: RNG.int(1, 251),
+                    level: RNG.int(min, max),
+                    isBoss: isBoss,
+                    overrides: {}
+                };
+
+                // 5. Apply DEBUG Overrides (Cleanly separated)
+                if (typeof DEBUG !== 'undefined' && DEBUG.ENABLED) {
+                    if (DEBUG.ENEMY.ID) specs.id = DEBUG.ENEMY.ID;
+                    if (DEBUG.ENEMY.LEVEL) specs.level = DEBUG.ENEMY.LEVEL;
+                    if (DEBUG.ENEMY.IS_BOSS !== null) specs.isBoss = DEBUG.ENEMY.IS_BOSS;
+
+                    // Pass specific overrides to API
+                    if (DEBUG.ENEMY.SHINY !== null) specs.overrides.shiny = DEBUG.ENEMY.SHINY;
+                    if (DEBUG.ENEMY.STATUS) specs.overrides.status = DEBUG.ENEMY.STATUS;
+                    if (DEBUG.ENEMY.STAGES) specs.overrides.stages = DEBUG.ENEMY.STAGES;
+                }
+
+                // Natural Shiny Chance (if not forced)
+                if (!specs.overrides.hasOwnProperty('shiny') && RNG.roll(ENCOUNTER_CONFIG.SHINY_CHANCE)) {
+                    specs.overrides.shiny = true;
+                }
+
+                return specs;
+            },
+
+            async generate(party, wins) {
+                const specs = this.determineSpecs(party, wins);
+
+                // Fetch
+                let enemy = await API.getPokemon(specs.id, specs.level, specs.overrides);
+
+                // Fallback
+                if (!enemy) enemy = await API.getPokemon(25, 5, {});
+
+                // Apply Boss Attributes
+                if (specs.isBoss) {
+                    enemy.isBoss = true;
+                    enemy.name = "BOSS " + enemy.name;
+                    enemy.isHighTier = true;
+                    enemy.rageLevel = 3;
+                    enemy.maxHp = Math.floor(enemy.maxHp * 1.5);
+                    enemy.currentHp = enemy.maxHp;
+                }
+
+                // Apply Debug Rage/Volatiles post-creation
+                if (typeof DEBUG !== 'undefined' && DEBUG.ENABLED) {
+                    if (DEBUG.ENEMY.RAGE !== null) enemy.rageLevel = DEBUG.ENEMY.RAGE;
+                    if (DEBUG.ENEMY.VOLATILES) Object.assign(enemy.volatiles, DEBUG.ENEMY.VOLATILES);
+                }
+
+                return enemy;
+            }
+        };
+
+
         const Game = {
             tempSelection: null, tempSelectionList: [], party: [], activeSlot: 0, enemyMon: null, selectedItemKey: null,
             inventory: { potion: 1, superpotion: 0, hyperpotion: 0, maxpotion: 0, revive: 0, pokeball: 1, greatball: 0, ultraball: 0, masterball: 0 },
             state: 'START', selectedPartyIndex: -1, forcedSwitch: false, previousState: 'SELECTION', wins: 0, bossesDefeated: 0,
-            playerName: 'PLAYER', currentSummaryIndex: 0,
+            playerName: 'PLAYER', currentSummaryIndex: 0, savedBattleState: null,
 
             toggleLcd() {
                 Input.lcdEnabled = !Input.lcdEnabled;
@@ -3222,19 +3398,14 @@
             toggleRetroMotion() {
                 document.body.classList.toggle('retro-motion');
                 const el = document.getElementById('motion-check');
-
-                if (document.body.classList.contains('retro-motion')) {
-                    el.classList.add('checked');
-                } else {
-                    el.classList.remove('checked');
-                }
+                if (document.body.classList.contains('retro-motion')) el.classList.add('checked');
+                else el.classList.remove('checked');
             },
 
-
+            // --- SAVES (Delegated to StorageSystem) ---
             checkSave() {
-                const saved = localStorage.getItem('gs_battler_save');
-                if (saved) {
-                    const data = JSON.parse(saved);
+                if (StorageSystem.exists()) {
+                    const data = StorageSystem.load();
                     document.getElementById('start-screen').classList.add('hidden');
                     document.getElementById('continue-screen').classList.remove('hidden');
                     document.getElementById('save-wins').innerText = data.wins || 0;
@@ -3243,13 +3414,12 @@
 
                     const prevRow = document.getElementById('save-preview');
                     prevRow.innerHTML = '';
-                    data.party.forEach((p, i) => {
+                    data.party.forEach((p) => {
                         const img = document.createElement('img'); img.src = p.icon; img.className = 'mini-icon';
                         if (p.currentHp <= 0) img.classList.add('fainted');
                         img.onclick = () => this.openSummary(p, 'READ_ONLY');
                         prevRow.appendChild(img);
                     });
-
                     Input.setMode('CONTINUE');
                 } else {
                     document.getElementById('start-screen').classList.add('hidden');
@@ -3257,6 +3427,51 @@
                 }
             },
 
+            save() {
+                const currentEnemy = (this.state === 'BATTLE' && this.enemyMon && this.enemyMon.currentHp > 0) ? this.enemyMon : null;
+                StorageSystem.save({
+                    party: this.party, inventory: this.inventory, wins: this.wins,
+                    bossesDefeated: this.bossesDefeated, activeSlot: this.activeSlot, playerName: this.playerName,
+                    enemyMon: currentEnemy,
+                    weather: (this.state === 'BATTLE') ? Battle.weather : { type: 'none', turns: 0 },
+                    delayedMoves: (this.state === 'BATTLE') ? Battle.delayedMoves : []
+                });
+            },
+
+            load() {
+                const data = StorageSystem.load();
+                if (!data) return false;
+
+                this.party = data.party || [];
+                this.inventory = data.inventory || {};
+                this.wins = data.wins || 0;
+                this.bossesDefeated = data.bossesDefeated || 0;
+                this.activeSlot = data.activeSlot || 0;
+                this.playerName = data.playerName || 'PLAYER';
+                this.enemyMon = data.enemyMon || null;
+
+                // Hold state for Battle to pick up
+                this.savedBattleState = {
+                    weather: data.weather || { type: 'none', turns: 0 },
+                    delayedMoves: data.delayedMoves || []
+                };
+
+                // Cleanup if not resuming a battle
+                const isResuming = (this.enemyMon !== null);
+                this.party.forEach(p => {
+                    p.nextLvlExp = Math.pow(p.level + 1, 3) - Math.pow(p.level, 3);
+                    if (!isResuming) {
+                        p.volatiles = {}; p.rageLevel = 0;
+                        if (p.transformBackup) {
+                            Object.assign(p, p.transformBackup); // Fast revert
+                            p.transformBackup = null;
+                        }
+                    }
+                });
+                return true;
+            },
+
+            // --- FLOW CONTROL ---
             startNameInput() {
                 document.getElementById('continue-screen').classList.add('hidden');
                 document.getElementById('name-screen').classList.remove('hidden');
@@ -3273,384 +3488,236 @@
 
             loadGame() {
                 document.getElementById('continue-screen').classList.add('hidden');
-
-                // 1. NUCLEAR RESET FIRST
                 Battle.resetScene();
-
-                // Force Lock immediately so user can't click things while loading
                 Battle.uiLocked = true;
 
                 if (this.load()) {
-                    // Debug Injection
-                    if (typeof DEBUG !== 'undefined' && DEBUG.ENABLED) Object.assign(this.inventory, DEBUG.INVENTORY);
+                    if (DEBUG.ENABLED) Object.assign(this.inventory, DEBUG.INVENTORY);
 
-                    // UI Setup
                     document.getElementById('selection-screen').classList.add('hidden');
                     document.getElementById('scene').classList.remove('hidden');
                     document.getElementById('dialog-box').classList.remove('hidden');
                     document.getElementById('streak-box').classList.remove('hidden');
                     document.getElementById('streak-box').innerText = `WINS: ${this.wins}`;
 
-                    // Validate Active Pokemon
+                    // Safety Check: Active slot alive?
                     if (!this.party[this.activeSlot] || this.party[this.activeSlot].currentHp <= 0) {
                         const aliveIdx = this.party.findIndex(p => p.currentHp > 0);
                         if (aliveIdx !== -1) this.activeSlot = aliveIdx;
-                        else {
-                            this.party.forEach(p => p.currentHp = p.maxHp);
-                            this.activeSlot = 0;
-                        }
+                        else { this.party.forEach(p => p.currentHp = p.maxHp); this.activeSlot = 0; } // Emergency heal
                     }
 
                     this.state = 'BATTLE';
 
-                    // --- RESUME LOGIC ---
+                    // RESUME LOGIC
                     if (this.enemyMon && this.enemyMon.currentHp > 0) {
-
-                        // 2. APPLY SAVED BATTLE DATA (Now that resetScene is done)
                         if (this.savedBattleState) {
                             Battle.weather = this.savedBattleState.weather;
                             Battle.delayedMoves = this.savedBattleState.delayedMoves;
                         }
-
-                        // 3. RESTORE WEATHER VISUALS
                         if (Battle.weather.type !== 'none' && WEATHER_FX[Battle.weather.type]) {
                             document.getElementById('scene').style.backgroundColor = WEATHER_FX[Battle.weather.type].color;
                         }
 
-                        // 4. PRELOAD IMAGE (Prevents "Invisible Enemy")
                         const img = new Image();
-                        img.onload = () => {
-                            const eSprite = document.getElementById('enemy-sprite');
-                            eSprite.src = this.enemyMon.frontSprite;
-
-                            // 5. SETUP BATTLE (Skip Intro)
+                        const resumeStart = () => {
+                            document.getElementById('enemy-sprite').src = this.enemyMon.frontSprite;
                             Battle.setup(this.party[this.activeSlot], this.enemyMon, false, true);
-
-                            // 6. FORCE VISIBILITY & ANIMATION
-                            // We manually override any opacity/transitions to ensure it appears
-                            eSprite.style.transition = 'none';
-                            eSprite.style.opacity = 1;
+                            document.getElementById('enemy-sprite').style.opacity = 1;
                             document.getElementById('player-sprite').style.opacity = 1;
                             document.getElementById('player-hud').classList.add('hud-active');
                             document.getElementById('enemy-hud').classList.add('hud-active');
-
-                            // 7. FADE IN SCENE
-                            const scene = document.getElementById('scene');
-                            scene.classList.add('anim-fade-in');
-                            setTimeout(() => scene.classList.remove('anim-fade-in'), 1000);
-
-                            // 8. UNLOCK UI
-                            Battle.typeText(`Resumed battle against\n${this.enemyMon.name}!`, () => {
-                                Battle.uiLocked = false;
-                                Battle.uiToMenu();
-                            });
+                            document.getElementById('scene').classList.add('anim-fade-in');
+                            setTimeout(() => document.getElementById('scene').classList.remove('anim-fade-in'), 1000);
+                            Battle.typeText(`Resumed battle against\n${this.enemyMon.name}!`, () => { Battle.uiLocked = false; Battle.uiToMenu(); });
                         };
-
-                        // Fallback if image errors
-                        img.onerror = img.onload;
+                        img.onload = resumeStart;
+                        img.onerror = resumeStart;
                         img.src = this.enemyMon.frontSprite;
-
                     } else {
-                        // START FRESH BATTLE
                         this.startNewBattle(true);
                     }
                 }
             },
 
             newGame() {
-                localStorage.removeItem('gs_battler_save');
-                this.party = [];
-                this.wins = 0;
-                this.bossesDefeated = 0;
+                StorageSystem.wipe();
+                this.party = []; this.wins = 0; this.bossesDefeated = 0;
                 this.inventory = { potion: 1, superpotion: 0, hyperpotion: 0, maxpotion: 0, revive: 0, pokeball: 1, greatball: 0, ultraball: 0, masterball: 0 };
-
-                // DEBUG: INJECT INVENTORY
                 if (DEBUG.ENABLED) Object.assign(this.inventory, DEBUG.INVENTORY);
-
                 this.showSelectionScreen();
             },
 
-            save() {
-                // 1. Capture Current Battle State
-                // We need to know if a battle is actually active to save the enemy
-                const currentEnemy = (this.state === 'BATTLE' && this.enemyMon && this.enemyMon.currentHp > 0) ? this.enemyMon : null;
-                const weatherState = (this.state === 'BATTLE') ? Battle.weather : { type: 'none', turns: 0 };
-                const delayedState = (this.state === 'BATTLE') ? Battle.delayedMoves : [];
-
-                const saveObj = {
-                    party: this.party,
-                    inventory: this.inventory,
-                    wins: this.wins,
-                    bossesDefeated: this.bossesDefeated,
-                    activeSlot: this.activeSlot,
-                    playerName: this.playerName,
-
-                    // --- NEW: SUSPEND DATA ---
-                    enemyMon: currentEnemy,
-                    weather: weatherState,
-                    delayedMoves: delayedState
-                };
-
-                localStorage.setItem('gs_battler_save', JSON.stringify(saveObj));
-            },
-
-            load() {
-                const saved = localStorage.getItem('gs_battler_save');
-                if (saved) {
-                    try {
-                        const data = JSON.parse(saved);
-
-                        this.party = data.party || [];
-                        this.inventory = data.inventory || {};
-                        this.wins = data.wins || 0;
-                        this.bossesDefeated = data.bossesDefeated || 0;
-                        this.activeSlot = data.activeSlot || 0;
-                        this.playerName = data.playerName || 'PLAYER';
-
-                        // Restore Suspend Data
-                        this.enemyMon = data.enemyMon || null;
-
-                        // --- HOLD BATTLE DATA (Don't apply to Battle object yet) ---
-                        this.savedBattleState = {
-                            weather: data.weather || { type: 'none', turns: 0 },
-                            delayedMoves: data.delayedMoves || []
-                        };
-
-                        // Sanitization (Clean up party if NOT resuming a battle)
-                        const isResuming = (this.enemyMon !== null);
-
-                        this.party.forEach(p => {
-                            p.nextLvlExp = Math.pow(p.level + 1, 3) - Math.pow(p.level, 3);
-                            if (!isResuming) {
-                                p.volatiles = {};
-                                p.rageLevel = 0;
-                                if (p.transformBackup) {
-                                    p.moves = p.transformBackup.moves;
-                                    p.stats = p.transformBackup.stats;
-                                    p.types = p.transformBackup.types;
-                                    p.frontSprite = p.transformBackup.frontSprite;
-                                    p.backSprite = p.transformBackup.backSprite;
-                                    p.transformBackup = null;
-                                }
-                            }
-                        });
-
-                        return true;
-                    } catch (e) {
-                        console.error("Save file corrupted", e);
-                        return false;
-                    }
-                }
-                return false;
-            },
-
             resetToTitle() {
-                localStorage.removeItem('gs_battler_save');
-                this.party = [];
-                this.wins = 0;
-                this.bossesDefeated = 0;
-                this.inventory = { potion: 1, superpotion: 0, hyperpotion: 0, maxpotion: 0, revive: 0, pokeball: 1, greatball: 0, ultraball: 0, masterball: 0 };
+                StorageSystem.wipe();
+                this.party = []; this.wins = 0; this.bossesDefeated = 0;
 
-                document.getElementById('scene').classList.add('hidden');
-                document.getElementById('dialog-box').classList.add('hidden');
-                document.getElementById('summary-panel').classList.add('hidden');
-                document.getElementById('streak-box').classList.add('hidden');
-                document.getElementById('pack-screen').classList.add('hidden');
-                document.getElementById('party-screen').classList.add('hidden');
-                document.getElementById('action-menu').classList.add('hidden');
-                document.getElementById('move-menu').classList.add('hidden');
-                document.getElementById('selection-screen').classList.add('hidden');
+                // Hide All
+                ['scene', 'dialog-box', 'summary-panel', 'streak-box', 'pack-screen', 'party-screen', 'action-menu', 'move-menu', 'selection-screen'].forEach(id => document.getElementById(id).classList.add('hidden'));
 
                 document.getElementById('start-screen').classList.remove('hidden');
                 Input.setMode('START');
             },
 
-            // Safely go back to menu without deleting save
             returnToTitle() {
-                // 1. Stop any battle logic
                 this.state = 'START';
-
-                // 2. Hide all Battle UI
-                document.getElementById('scene').classList.add('hidden');
-                document.getElementById('dialog-box').classList.add('hidden');
-                document.getElementById('streak-box').classList.add('hidden');
-                document.getElementById('summary-panel').classList.add('hidden');
-                document.getElementById('party-screen').classList.add('hidden');
-                document.getElementById('pack-screen').classList.add('hidden');
-                document.getElementById('action-menu').classList.add('hidden');
-                document.getElementById('move-menu').classList.add('hidden');
-
-                // 3. Clean up sprites/animations/TIMERS
+                ['scene', 'dialog-box', 'streak-box', 'summary-panel', 'party-screen', 'pack-screen', 'action-menu', 'move-menu'].forEach(id => document.getElementById(id).classList.add('hidden'));
                 Battle.resetScene();
-
-                // 4. Show Title
                 document.getElementById('start-screen').classList.remove('hidden');
-
-                // 5. Reset Input
                 Input.setMode('START');
             },
 
-            // Ends battle immediately and finds a new opponent (Roar/Whirlwind effect)
             skipBattle() {
                 Battle.cleanup();
-                // Ensure party is saved (HP loss etc)
                 this.save();
-
-                // Brief pause then start new
-                setTimeout(() => {
-                    this.startNewBattle(false);
-                }, 1000);
+                setTimeout(() => { this.startNewBattle(false); }, 1000);
             },
 
-            // IN: Game object
-            // IN: Game object
+            async startNewBattle(isFirst = false) {
+                Battle.resetScene();
+
+                // Ghost Fix
+                const eSprite = document.getElementById('enemy-sprite');
+                eSprite.style.opacity = 0;
+                eSprite.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
+                Battle.uiLocked = true;
+                this.enemyMon = null;
+
+                Battle.typeText("Searching for wild Pokemon...", null, true);
+
+                // Reset Player Logic
+                if (this.party[this.activeSlot]) {
+                    const p = this.party[this.activeSlot];
+                    p.volatiles = {};
+                    p.stages = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, acc: 0, eva: 0 };
+                    p.rageLevel = 0;
+                    if (DEBUG.ENABLED) {
+                        if (DEBUG.PLAYER.RAGE !== null) p.rageLevel = DEBUG.PLAYER.RAGE;
+                        if (DEBUG.PLAYER.STATUS !== null) p.status = DEBUG.PLAYER.STATUS;
+                        if (DEBUG.PLAYER.STAGES !== null) Object.assign(p.stages, DEBUG.PLAYER.STAGES);
+                        if (DEBUG.PLAYER.VOLATILES) Object.assign(p.volatiles, DEBUG.PLAYER.VOLATILES);
+                    }
+                }
+
+                // GENERATE ENEMY (Delegated to Manager)
+                try {
+                    this.enemyMon = await EncounterManager.generate(this.party, this.wins);
+                } catch (err) {
+                    console.error(err);
+                    // Hard fallback
+                    this.enemyMon = await API.getPokemon(25, 5, {});
+                }
+
+                // Start Sequence
+                const img = new Image();
+                const launch = () => {
+                    eSprite.src = this.enemyMon.frontSprite;
+                    Battle.setup(this.party[this.activeSlot], this.enemyMon, true, !isFirst);
+                };
+                img.onload = launch;
+                img.onerror = launch;
+                img.src = this.enemyMon.frontSprite;
+
+                this.save();
+            },
+
+            // --- MENUS (Selection, Summary, Party, etc) ---
+            // These remain largely unchanged, just compacted slightly for cleanliness
+
             async showSelectionScreen() {
-                this.state = 'SELECTION';
-                Battle.uiLocked = false;
-                Input.setMode('NONE');
+                this.state = 'SELECTION'; Battle.uiLocked = false; Input.setMode('NONE');
+                ['scene', 'dialog-box', 'summary-panel', 'streak-box'].forEach(id => document.getElementById(id).classList.add('hidden'));
+                document.getElementById('selection-screen').classList.remove('hidden');
 
-                document.getElementById('scene').classList.add('hidden');
-                document.getElementById('dialog-box').classList.add('hidden');
-                document.getElementById('summary-panel').classList.add('hidden');
-                document.getElementById('streak-box').classList.add('hidden');
-
-                const selScreen = document.getElementById('selection-screen');
-                selScreen.classList.remove('hidden');
-
-                const textBox = document.getElementById('sel-text-box');
-                const table = document.getElementById('lab-table');
-                const cursor = document.getElementById('sel-cursor');
-                const oldBalls = document.querySelectorAll('.pokeball-select');
-                oldBalls.forEach(b => b.remove());
-
+                document.getElementById('sel-text-box').innerHTML = '<span class="blink-text">CATCHING POKEMON...</span>';
+                document.getElementById('sel-cursor').style.display = 'none';
+                document.querySelectorAll('.pokeball-select').forEach(b => b.remove());
                 document.getElementById('sel-preview-img').style.display = 'none';
                 document.getElementById('sel-preview-shiny').style.display = 'none';
 
-                cursor.style.display = 'none';
-                textBox.innerHTML = '<span class="blink-text">CATHING POKEMON...</span>';
-
-                // 1. Determine IDs (Force ID if set, otherwise Random)
+                // Determine Selection IDs
                 const ids = [];
-                if (DEBUG.ENABLED && DEBUG.PLAYER.ID) { ids.push(DEBUG.PLAYER.ID); }
-                while (ids.length < 3) { const r = Math.floor(Math.random() * 251) + 1; if (!ids.includes(r)) ids.push(r); }
+                if (DEBUG.ENABLED && DEBUG.PLAYER.ID) ids.push(DEBUG.PLAYER.ID);
+                while (ids.length < 3) { const r = RNG.int(1, 251); if (!ids.includes(r)) ids.push(r); }
 
-                const minWait = new Promise(resolve => setTimeout(resolve, 1000));
+                const [_, list] = await Promise.all([
+                    wait(1000),
+                    Promise.all(ids.map((id, i) => {
+                        let lvl = 15; let shiny = null; const overrides = {};
+                        if (DEBUG.ENABLED && i === 0) {
+                            if (DEBUG.PLAYER.LEVEL) lvl = DEBUG.PLAYER.LEVEL;
+                            if (DEBUG.PLAYER.SHINY !== null) shiny = DEBUG.PLAYER.SHINY;
+                            if (DEBUG.PLAYER.MOVES) overrides.moves = DEBUG.PLAYER.MOVES;
+                        }
+                        if (shiny !== null) overrides.shiny = shiny;
+                        return API.getPokemon(id, lvl, overrides);
+                    }))
+                ]);
 
-                // 2. Fetch Data
-                const dataFetch = Promise.all(ids.map((id, index) => {
-                    let lvl = 15;
-                    let shinyVal = null;
-                    const overrides = {};
+                this.tempSelectionList = list;
+                const table = document.getElementById('lab-table');
 
-                    // --- FIX: Check index === 0 ONLY (Removed dependency on DEBUG.PLAYER.ID) ---
-                    if (DEBUG.ENABLED && index === 0) {
-                        if (DEBUG.PLAYER.LEVEL) lvl = DEBUG.PLAYER.LEVEL;
-                        if (DEBUG.PLAYER.SHINY !== null) shinyVal = DEBUG.PLAYER.SHINY;
-
-                        if (DEBUG.PLAYER.STATUS) overrides.status = DEBUG.PLAYER.STATUS;
-                        if (DEBUG.PLAYER.STAGES) overrides.stages = DEBUG.PLAYER.STAGES;
-                        if (DEBUG.PLAYER.MOVES) overrides.moves = DEBUG.PLAYER.MOVES;
-                    }
-
-                    if (shinyVal !== null) overrides.shiny = shinyVal;
-
-                    return API.getPokemon(id, lvl, overrides);
-                }));
-
-                const [_, pokemonList] = await Promise.all([minWait, dataFetch]);
-                this.tempSelectionList = pokemonList;
-
-                // 3. Render Balls
                 this.tempSelectionList.forEach((p, i) => {
                     if (!p) return;
                     const ball = document.createElement('div'); ball.className = 'pokeball-select'; ball.id = `ball-${i}`;
                     ball.onmouseenter = () => { Input.focus = i; Input.updateVisuals(); };
-                    ball.onclick = () => { this.selectPokemon(p); };
+                    ball.onclick = () => { this.tempSelection = p; this.openSummary(p, 'SELECTION'); };
                     table.appendChild(ball);
                 });
 
-                textBox.innerHTML = 'SELECT A POKEMON';
-                cursor.style.display = 'block';
-
+                document.getElementById('sel-text-box').innerHTML = 'SELECT A POKEMON';
+                document.getElementById('sel-cursor').style.display = 'block';
                 Input.setMode('SELECTION', 0);
             },
 
-            selectPokemon(p) { this.tempSelection = p; this.openSummary(p, 'SELECTION'); },
-
             openSummary(p, mode) {
                 this.previousState = this.state;
-                if (mode) this.state = mode; else this.state = 'SUMMARY';
+                this.state = mode || 'SUMMARY';
                 Input.setMode('SUMMARY', 1);
 
-                // NEW: Correctly find index for Starters
-                if (mode === 'SELECTION') {
-                    this.currentSummaryIndex = this.tempSelectionList.indexOf(p);
-                } else {
-                    const foundIdx = this.party.findIndex(mon => mon.id === p.id && mon.exp === p.exp);
-                    this.currentSummaryIndex = foundIdx !== -1 ? foundIdx : 0;
+                if (mode === 'SELECTION') this.currentSummaryIndex = this.tempSelectionList.indexOf(p);
+                else {
+                    const idx = this.party.findIndex(mon => mon.id === p.id && mon.exp === p.exp);
+                    this.currentSummaryIndex = (idx !== -1) ? idx : 0;
                 }
 
                 document.getElementById('summary-panel').classList.remove('hidden');
                 this.renderSummaryData(p);
 
+                // Setup Buttons
                 const btn = document.getElementById('btn-action');
-                btn.onclick = null;
                 const prevBtn = document.getElementById('btn-prev');
                 const nextBtn = document.getElementById('btn-next');
+                const backBtn = document.getElementById('btn-back-sum');
 
-                prevBtn.onmouseenter = () => { Input.focus = 0; Input.updateVisuals(); };
-                btn.onmouseenter = () => { Input.focus = 1; Input.updateVisuals(); };
-                document.getElementById('btn-back-sum').onmouseenter = () => { Input.focus = 2; Input.updateVisuals(); };
-                nextBtn.onmouseenter = () => { Input.focus = 3; Input.updateVisuals(); };
+                // Basic Listeners
+                [prevBtn, btn, backBtn, nextBtn].forEach((el, i) => el.onmouseenter = () => { Input.focus = i; Input.updateVisuals(); });
+
+                btn.disabled = false; btn.className = "confirm-btn";
+                prevBtn.disabled = false; nextBtn.disabled = false;
 
                 if (this.state === 'SELECTION') {
-                    btn.innerText = "I CHOOSE YOU!"; btn.disabled = false;
-                    btn.onclick = () => this.confirmSelection();
-                    // NEW: Enable navigation buttons for starters
-                    prevBtn.disabled = false; nextBtn.disabled = false;
-                }
-                else if (this.state === 'OVERFLOW') {
-                    btn.innerText = "RELEASE"; btn.className = "confirm-btn danger"; btn.disabled = false;
-                    btn.onclick = () => this.releasePokemon(this.selectedPartyIndex);
+                    btn.innerText = "I CHOOSE YOU!"; btn.onclick = () => this.confirmSelection();
+                } else if (this.state === 'OVERFLOW') {
+                    btn.innerText = "RELEASE"; btn.className = "confirm-btn danger"; btn.onclick = () => this.releasePokemon(this.selectedPartyIndex);
                     prevBtn.disabled = true; nextBtn.disabled = true;
-                }
-                else if (this.state === 'READ_ONLY') {
+                } else if (this.state === 'READ_ONLY') {
                     btn.innerText = "ACTION"; btn.disabled = true;
-                    btn.className = "confirm-btn";
-                    prevBtn.disabled = false; nextBtn.disabled = false;
-                }
-                else if (this.state === 'HEAL') {
-                    btn.innerText = "USE"; btn.disabled = false; btn.className = "confirm-btn";
-                    btn.onclick = () => this.applyItemToPokemon(this.selectedPartyIndex);
+                } else if (this.state === 'HEAL') {
+                    btn.innerText = "USE"; btn.onclick = () => this.applyItemToPokemon(this.selectedPartyIndex);
                     prevBtn.disabled = true; nextBtn.disabled = true;
-                }
-                else {
-                    btn.innerText = "SHIFT"; btn.disabled = false; btn.className = "confirm-btn";
-                    btn.onclick = () => this.partySwitch();
-                    prevBtn.disabled = false; nextBtn.disabled = false;
+                } else {
+                    btn.innerText = "SHIFT"; btn.onclick = () => this.partySwitch();
                 }
             },
 
-            // IN: Game object
             renderSummaryData(p) {
                 AudioEngine.playCry(p.cry);
-
-                // STATUS TEXT LOGIC
                 const statusEl = document.getElementById('sum-status-text');
-
-                if (p.currentHp <= 0) {
-                    statusEl.innerText = "STATUS/FNT";
-                    statusEl.style.color = "#c83828";
-                }
-                else if (p.status && STATUS_DATA[p.status]) {
-                    const s = STATUS_DATA[p.status];
-                    statusEl.innerText = `STATUS/${s.name}`;
-                    statusEl.style.color = s.color;
-                }
-                else {
-                    statusEl.innerText = "STATUS/OK";
-                    statusEl.style.color = "black";
-                }
+                if (p.currentHp <= 0) { statusEl.innerText = "STATUS/FNT"; statusEl.style.color = "#c83828"; }
+                else if (p.status && STATUS_DATA[p.status]) { statusEl.innerText = `STATUS/${STATUS_DATA[p.status].name}`; statusEl.style.color = STATUS_DATA[p.status].color; }
+                else { statusEl.innerText = "STATUS/OK"; statusEl.style.color = "black"; }
 
                 document.getElementById('sum-name').innerText = p.name;
                 document.getElementById('sum-name').style.color = p.isShiny ? "#d8b030" : "black";
@@ -3660,68 +3727,38 @@
 
                 document.getElementById('sum-hp-txt').innerText = `${Math.max(0, p.currentHp)}/${p.maxHp}`;
                 const hpPct = Math.min(100, Math.max(0, (p.currentHp / p.maxHp) * 100));
-                const hpBar = document.getElementById('sum-hp-bar');
-                hpBar.style.width = `${hpPct}%`;
-                hpBar.style.background = hpPct > 50 ? "var(--hp-green)" : hpPct > 20 ? "var(--hp-yellow)" : "var(--hp-red)";
+                document.getElementById('sum-hp-bar').style.cssText = `width:${hpPct}%; background:${hpPct > 50 ? "var(--hp-green)" : hpPct > 20 ? "var(--hp-yellow)" : "var(--hp-red)"}`;
 
                 document.getElementById('sum-exp-txt').innerText = `${p.exp}/${p.nextLvlExp}`;
-                const expPct = (p.exp / p.nextLvlExp) * 100;
-                document.getElementById('sum-exp-bar').style.width = `${Math.min(100, expPct)}%`;
+                document.getElementById('sum-exp-bar').style.width = `${Math.min(100, (p.exp / p.nextLvlExp) * 100)}%`;
 
                 document.getElementById('summary-stats').innerHTML = `
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">
                 <div>ATK ${p.stats.atk}</div><div>DEF ${p.stats.def}</div>
                 <div>SPA ${p.stats.spa}</div><div>SPD ${p.stats.spd}</div>
                 <div>SPE ${p.stats.spe}</div>
-            </div>
-        `;
+            </div>`;
                 document.getElementById('summary-moves').innerHTML = p.moves.map(m => `
-            <div class="move-row">
-                <span class="move-name">${m.name}</span>
-                <div class="move-info-grp">
-                    <span class="move-pwr">PWR ${m.power > 0 ? m.power : '-'}</span>
-                    <span class="move-type">${m.type.toUpperCase()}</span>
-                </div>
-            </div>`).join('');
+            <div class="move-row"><span class="move-name">${m.name}</span><div class="move-info-grp"><span class="move-pwr">PWR ${m.power || '-'}</span><span class="move-type">${m.type.toUpperCase()}</span></div></div>`).join('');
             },
 
             navSummary(dir) {
-                if (this.state === 'HEAL' || this.state === 'OVERFLOW') return;
-
-                // NEW: Choose which list to scroll through
+                if (['HEAL', 'OVERFLOW'].includes(this.state)) return;
                 let list = (this.state === 'SELECTION') ? this.tempSelectionList : this.party;
-
                 let nextIdx = this.currentSummaryIndex + dir;
                 if (nextIdx < 0) nextIdx = list.length - 1;
                 if (nextIdx >= list.length) nextIdx = 0;
-
                 this.currentSummaryIndex = nextIdx;
-
-                if (this.state === 'PARTY' || this.state === 'SUMMARY') {
-                    this.selectedPartyIndex = nextIdx;
-                }
-
-                // NEW: Update the temporary selection so "I Choose You" grabs the correct one
-                if (this.state === 'SELECTION') {
-                    this.tempSelection = list[nextIdx];
-                }
-
+                if (['PARTY', 'SUMMARY'].includes(this.state)) this.selectedPartyIndex = nextIdx;
+                if (this.state === 'SELECTION') this.tempSelection = list[nextIdx];
                 this.renderSummaryData(list[nextIdx]);
             },
 
             closeSummary() {
                 document.getElementById('summary-panel').classList.add('hidden');
                 this.state = this.previousState;
-
-                if (this.state === 'SELECTION') {
-                    // Return to ball selection, remembering which one we were looking at
-                    Input.setMode('SELECTION', this.currentSummaryIndex);
-                }
-                else if (this.state === 'PARTY') {
-                    // NEW: Skip Context menu, go straight to Party List
-                    document.getElementById('party-context').classList.add('hidden');
-                    Input.setMode('PARTY', this.selectedPartyIndex);
-                }
+                if (this.state === 'SELECTION') Input.setMode('SELECTION', this.currentSummaryIndex);
+                else if (this.state === 'PARTY') { document.getElementById('party-context').classList.add('hidden'); Input.setMode('PARTY', this.selectedPartyIndex); }
                 else if (this.state === 'HEAL') Input.setMode('CONTEXT');
                 else if (this.state === 'READ_ONLY') Input.setMode('CONTINUE');
             },
@@ -3732,174 +3769,40 @@
                 this.party = [this.tempSelection];
                 this.activeSlot = 0; this.wins = 0; this.bossesDefeated = 0; this.save();
                 document.getElementById('selection-screen').classList.add('hidden');
-                document.getElementById('scene').classList.remove('hidden');
-                document.getElementById('dialog-box').classList.remove('hidden');
-                document.getElementById('streak-box').classList.remove('hidden');
+                ['scene', 'dialog-box', 'streak-box'].forEach(id => document.getElementById(id).classList.remove('hidden'));
                 document.getElementById('streak-box').innerText = "WINS: 0";
                 this.state = 'BATTLE'; this.startNewBattle(true);
             },
 
-
-
-
-            async startNewBattle(isFirst = false) {
-                // 1. NUCLEAR RESET (Clears old styles/classes)
-                Battle.resetScene();
-
-                // 2. GHOST FIX (Force hide immediately)
-                const eSprite = document.getElementById('enemy-sprite');
-                eSprite.style.opacity = 0;
-                eSprite.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"; // Blank placeholder
-
-                Battle.uiLocked = true;
-                this.enemyMon = null;
-
-                Battle.typeText("Searching for wild Pokemon...", null, true);
-
-                // 3. LOGIC RESET (Reset Player Volatiles/Stages)
-                if (this.party[this.activeSlot]) {
-                    const p = this.party[this.activeSlot];
-                    p.volatiles = {};
-                    p.stages = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, acc: 0, eva: 0 };
-                    p.rageLevel = 0;
-
-                    if (typeof DEBUG !== 'undefined' && DEBUG.ENABLED) {
-                        if (DEBUG.PLAYER.RAGE !== null) p.rageLevel = DEBUG.PLAYER.RAGE;
-                        if (DEBUG.PLAYER.STATUS !== null) p.status = DEBUG.PLAYER.STATUS;
-                        if (DEBUG.PLAYER.STAGES !== null) Object.assign(p.stages, DEBUG.PLAYER.STAGES);
-                        if (DEBUG.PLAYER.VOLATILES) Object.assign(p.volatiles, DEBUG.PLAYER.VOLATILES);
-                    }
-                }
-
-                // 4. DETERMINE ENCOUNTER LEVEL
-                const levels = this.party.map(p => p.level);
-                const avgLvl = levels.reduce((a, b) => a + b, 0) / levels.length;
-                const maxLvlInParty = Math.max(...levels);
-                const refLevel = Math.ceil((avgLvl + maxLvlInParty) / 2);
-
-                const isStreak = (this.wins > 0 && this.wins % ENCOUNTER_CONFIG.BOSS_STREAK_TRIGGER === 0);
-                const bossRate = isStreak ? ENCOUNTER_CONFIG.BOSS_STREAK_CHANCE : ENCOUNTER_CONFIG.BOSS_CHANCE;
-                let isBoss = Math.random() < bossRate;
-
-                let minLvl, maxLvl;
-                if (isBoss) {
-                    minLvl = refLevel + ENCOUNTER_CONFIG.BOSS_LEVEL_MIN;
-                    maxLvl = refLevel + ENCOUNTER_CONFIG.BOSS_LEVEL_MAX;
-                } else {
-                    minLvl = Math.max(1, refLevel + ENCOUNTER_CONFIG.WILD_LEVEL_MIN);
-                    maxLvl = Math.max(1, refLevel + ENCOUNTER_CONFIG.WILD_LEVEL_MAX);
-                }
-
-                let r = Math.floor(Math.random() * 251) + 1;
-                let lvl = Math.floor(Math.random() * (maxLvl - minLvl + 1)) + minLvl;
-                let shinyVal = null;
-
-                const enemyOverrides = {};
-
-                if (typeof DEBUG !== 'undefined' && DEBUG.ENABLED) {
-                    if (DEBUG.ENEMY.ID) r = DEBUG.ENEMY.ID;
-                    if (DEBUG.ENEMY.LEVEL) lvl = DEBUG.ENEMY.LEVEL;
-                    if (DEBUG.ENEMY.IS_BOSS !== null) isBoss = DEBUG.ENEMY.IS_BOSS;
-                    if (DEBUG.ENEMY.SHINY !== null) shinyVal = DEBUG.ENEMY.SHINY;
-                    if (shinyVal !== null) enemyOverrides.shiny = shinyVal;
-                    if (DEBUG.ENEMY.STATUS) enemyOverrides.status = DEBUG.ENEMY.STATUS;
-                    if (DEBUG.ENEMY.STAGES) enemyOverrides.stages = DEBUG.ENEMY.STAGES;
-                }
-
-                if (shinyVal === null && Math.random() < ENCOUNTER_CONFIG.SHINY_CHANCE) enemyOverrides.shiny = true;
-
-                // 5. FETCH DATA (The Critical Part)
-                try {
-                    this.enemyMon = await API.getPokemon(r, lvl, enemyOverrides);
-                } catch (err) {
-                    console.error("API Error:", err);
-                    // Fallback if API fails
-                    this.enemyMon = await API.getPokemon(25, 5, {});
-                }
-
-                // Apply Debug Volatiles
-                if (typeof DEBUG !== 'undefined' && DEBUG.ENABLED && DEBUG.ENEMY.VOLATILES) {
-                    Object.assign(this.enemyMon.volatiles, DEBUG.ENEMY.VOLATILES);
-                }
-
-                if (isBoss) {
-                    this.enemyMon.isBoss = true;
-                    this.enemyMon.name = "BOSS " + this.enemyMon.name;
-                    this.enemyMon.isHighTier = true;
-                    this.enemyMon.rageLevel = 3;
-                    this.enemyMon.maxHp = Math.floor(this.enemyMon.maxHp * 1.5);
-                    this.enemyMon.currentHp = this.enemyMon.maxHp;
-                }
-
-                if (typeof DEBUG !== 'undefined' && DEBUG.ENABLED && DEBUG.ENEMY.RAGE !== null) {
-                    this.enemyMon.rageLevel = DEBUG.ENEMY.RAGE;
-                }
-
-                // 6. LOAD IMAGE & START
-                const img = new Image();
-                img.onload = () => {
-                    eSprite.src = this.enemyMon.frontSprite;
-                    Battle.setup(this.party[this.activeSlot], this.enemyMon, true, !isFirst);
-                };
-
-                // Safety catch: If image fails to load, start anyway so game doesn't freeze
-                img.onerror = () => {
-                    console.warn("Sprite load error, forcing start.");
-                    eSprite.src = this.enemyMon.frontSprite;
-                    Battle.setup(this.party[this.activeSlot], this.enemyMon, true, !isFirst);
-                };
-
-                img.src = this.enemyMon.frontSprite;
-
-                this.save();
-            },
-
             openParty(forced) {
-                if (Battle.uiLocked && !forced && this.state !== 'OVERFLOW' && this.state !== 'HEAL') return;
+                if (Battle.uiLocked && !forced && !['OVERFLOW', 'HEAL'].includes(this.state)) return;
+                if (this.state === 'BATTLE' && !forced) Battle.lastMenuIndex = Input.focus;
 
-                // --- NEW: MEMORY LOGIC ---
-                // If we are opening the party from the main Battle menu, save the cursor position (e.g., on "PKMN")
-                if (this.state === 'BATTLE' && !forced) {
-                    Battle.lastMenuIndex = Input.focus;
-                }
-                // -------------------------
-
-                if (this.state !== 'OVERFLOW' && this.state !== 'HEAL') this.state = 'PARTY';
+                if (!['OVERFLOW', 'HEAL'].includes(this.state)) this.state = 'PARTY';
                 this.forcedSwitch = forced;
                 document.getElementById('party-screen').classList.remove('hidden');
                 document.getElementById('party-context').classList.add('hidden');
+
                 const closeBtn = document.getElementById('party-close-btn');
                 const header = document.getElementById('party-header-text');
-
-                // Ensure the Close button highlights when hovered/focused
                 closeBtn.onmouseenter = () => { Input.focus = this.party.length; Input.updateVisuals(); };
+
+                closeBtn.style.pointerEvents = "auto"; closeBtn.style.display = "block";
 
                 if (this.state === 'OVERFLOW') {
                     header.innerText = "PARTY FULL! RELEASE ONE.";
-                    closeBtn.innerText = "SELECT TO RELEASE";
-                    closeBtn.style.pointerEvents = "none";
-                    closeBtn.style.display = "block";
-                }
-                else if (this.state === 'HEAL') {
-                    header.innerText = "USE ON WHICH PKMN?";
-                    closeBtn.innerText = "CANCEL";
-                    closeBtn.onclick = () => {
-                        document.getElementById('party-screen').classList.add('hidden');
-                        Battle.openPack();
-                    };
-                    closeBtn.style.pointerEvents = "auto";
-                    closeBtn.style.display = "block";
-                }
-                else {
-                    header.innerText = "POKEMON PARTY";
-                    closeBtn.innerText = forced ? "CHOOSE A POKEMON" : "CLOSE [X]"; // Added [X] for clarity
+                    closeBtn.innerText = "SELECT TO RELEASE"; closeBtn.style.pointerEvents = "none";
+                } else if (this.state === 'HEAL') {
+                    header.innerText = "USE ON WHICH PKMN?"; closeBtn.innerText = "CANCEL";
+                    closeBtn.onclick = () => { document.getElementById('party-screen').classList.add('hidden'); Battle.openPack(); };
+                } else {
+                    header.innerText = "POKEMON PARTY"; closeBtn.innerText = forced ? "CHOOSE A POKEMON" : "CLOSE [X]";
                     closeBtn.onclick = forced ? null : () => Battle.uiToMenu();
-                    if (forced) { closeBtn.style.display = "none"; }
-                    else { closeBtn.style.display = "block"; closeBtn.style.pointerEvents = "auto"; }
+                    if (forced) closeBtn.style.display = "none";
                 }
-                this.renderParty();
-                Input.setMode('PARTY');
+                this.renderParty(); Input.setMode('PARTY');
             },
+
             renderParty() {
                 const list = document.getElementById('party-list'); list.innerHTML = "";
                 this.party.forEach((p, i) => {
@@ -3910,148 +3813,94 @@
                     const pct = (p.currentHp / p.maxHp) * 100; const color = pct > 50 ? "#48c050" : pct > 20 ? "#d8b030" : "#c83828";
                     div.innerHTML = `<img class="slot-icon" src="${p.icon}"><div class="slot-info"><div class="slot-row"><span>${p.name}</span><span>Lv${p.level}</span></div><div class="slot-row"><div class="mini-hp-bg"><div class="mini-hp-fill" style="width:${pct}%; background:${color}"></div></div><span>${Math.max(0, p.currentHp)}/${p.maxHp}</span></div></div>`;
                     div.onmouseenter = () => { Input.focus = i; Input.updateVisuals(); };
-                    div.onclick = () => { if (this.state === 'HEAL') { this.selectedPartyIndex = i; this.openContext(i); } else { this.openContext(i); } };
+                    div.onclick = () => { this.selectedPartyIndex = i; this.openContext(i); };
                     list.appendChild(div);
                 });
             },
+
             openContext(index) {
                 this.selectedPartyIndex = index; const ctx = document.getElementById('party-context'); ctx.classList.remove('hidden'); ctx.innerHTML = "";
                 const addBtn = (txt, fn, cls = '') => { const b = document.createElement('div'); b.className = `ctx-btn ${cls}`; b.innerText = txt; b.onclick = fn; const idx = ctx.children.length; b.onmouseenter = () => { Input.focus = idx; Input.updateVisuals(); }; ctx.appendChild(b); };
-                if (this.state === 'HEAL') { addBtn("USE", () => this.applyItemToPokemon(index)); addBtn("SUMMARY", () => this.partyStats()); addBtn("CLOSE", () => this.closeContext()); }
-                else if (this.state === 'OVERFLOW') { addBtn("RELEASE", () => this.releasePokemon(index), "warn"); addBtn("SUMMARY", () => this.partyStats()); addBtn("CLOSE", () => this.closeContext()); }
-                else { addBtn("SHIFT", () => this.partySwitch()); addBtn("SUMMARY", () => this.partyStats()); addBtn("CLOSE", () => this.closeContext()); }
+                if (this.state === 'HEAL') { addBtn("USE", () => this.applyItemToPokemon(index)); }
+                else if (this.state === 'OVERFLOW') { addBtn("RELEASE", () => this.releasePokemon(index), "warn"); }
+                else { addBtn("SHIFT", () => this.partySwitch()); }
+                addBtn("SUMMARY", () => this.partyStats()); addBtn("CLOSE", () => this.closeContext());
                 Input.setMode('CONTEXT');
             },
+
             closeContext() { document.getElementById('party-context').classList.add('hidden'); Input.setMode('PARTY', this.selectedPartyIndex); },
 
             releasePokemon(index) {
                 this.closeContext(); this.closeSummary();
-                const releasedMon = this.party[index];
-                this.party.splice(index, 1);
+                const releasedMon = this.party[index]; this.party.splice(index, 1);
                 document.getElementById('party-screen').classList.add('hidden');
-
-                if (index < this.activeSlot) { this.activeSlot--; }
-
+                if (index < this.activeSlot) this.activeSlot--;
                 if (index === this.activeSlot) {
                     if (this.activeSlot >= this.party.length) this.activeSlot = this.party.length - 1;
-                    Battle.animateSwap(releasedMon, this.party[this.activeSlot], () => { this.handleWin(true); });
+                    Battle.animateSwap(releasedMon, this.party[this.activeSlot], () => this.handleWin(true));
                 } else {
-                    Battle.typeText(`Bye bye, ${releasedMon.name}!`, () => { this.handleWin(true); });
+                    Battle.typeText(`Bye bye, ${releasedMon.name}!`, () => this.handleWin(true));
                 }
             },
 
             applyItemToPokemon(index) {
-                this.closeContext(); this.closeSummary();
-                const p = this.party[index];
-                const data = ITEMS[this.selectedItemKey];
+                this.closeContext(); this.closeSummary(); const p = this.party[index]; const data = ITEMS[this.selectedItemKey];
+                if (data.type === 'revive' && p.currentHp > 0) { AudioEngine.playSfx('error'); return; }
+                if (data.type === 'heal' && (p.currentHp <= 0 || p.currentHp >= p.maxHp)) { AudioEngine.playSfx('error'); return; }
 
-                if (data.type === 'revive') {
-                    if (p.currentHp > 0) { AudioEngine.playSfx('error'); return; }
-                    p.currentHp = Math.floor(p.maxHp / 2);
-                }
-                else if (data.type === 'heal') {
-                    if (p.currentHp <= 0 || p.currentHp >= p.maxHp) { AudioEngine.playSfx('error'); return; }
-                    p.currentHp = Math.min(p.maxHp, p.currentHp + data.heal);
-                }
+                if (data.type === 'revive') p.currentHp = Math.floor(p.maxHp / 2);
+                if (data.type === 'heal') p.currentHp = Math.min(p.maxHp, p.currentHp + data.heal);
 
                 this.inventory[this.selectedItemKey]--; AudioEngine.playSfx('heal'); this.renderParty();
                 if (index === this.activeSlot) Battle.updateHUD(p, 'player');
-                document.getElementById('party-screen').classList.add('hidden'); document.getElementById('pack-screen').classList.add('hidden'); document.getElementById('action-menu').classList.add('hidden');
-                this.state = 'BATTLE'; Battle.typeText(`Used ${data.name} on ${p.name}!`, () => { Battle.endTurnItem(); });
+                ['party-screen', 'pack-screen', 'action-menu'].forEach(id => document.getElementById(id).classList.add('hidden'));
+                this.state = 'BATTLE'; Battle.typeText(`Used ${data.name} on ${p.name}!`, () => Battle.endTurnItem());
             },
 
             partySwitch() {
                 const idx = this.selectedPartyIndex; const mon = this.party[idx];
-                // Safety check: prevent picking fainted mon or self
                 if (mon.currentHp <= 0 || idx === this.activeSlot) { AudioEngine.playSfx('error'); return; }
 
-                // --- 1. BATON PASS / INTERRUPT HANDLER ---
-                // If the Battle engine is paused waiting for input, we resolve that promise
-                // and do NOT start a standard switch sequence.
                 if (Battle.userInputPromise) {
-                    this.closeContext();
-                    this.closeSummary();
-                    document.getElementById('party-screen').classList.add('hidden');
-
-                    // Update global active slot state
-                    this.activeSlot = idx;
-
-                    // FIX 1: RESET STATE TO BATTLE
-                    // This is crucial. If we don't do this, the runQueue loop sees 
-                    // the state as 'PARTY' and aborts ('STOP_BATTLE'), causing the freeze.
-                    this.state = 'BATTLE';
-
-                    // RESUME THE BATTLE LOGIC with the chosen index
-                    Battle.userInputPromise(idx);
-                    return;
+                    this.closeContext(); this.closeSummary(); document.getElementById('party-screen').classList.add('hidden');
+                    this.activeSlot = idx; this.state = 'BATTLE';
+                    Battle.userInputPromise(idx); return;
                 }
 
-                // --- 2. STANDARD SWITCH ---
-                // Clear stats/volatiles for a normal switch
                 this.party[this.activeSlot].rageLevel = 0;
                 this.party[this.activeSlot].volatiles = {};
                 this.party[this.activeSlot].stages = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, acc: 0, eva: 0 };
 
                 this.closeContext(); this.closeSummary(); document.getElementById('party-screen').classList.add('hidden');
                 this.activeSlot = idx; this.state = 'BATTLE';
-
-                if (this.forcedSwitch) {
-                    Battle.switchIn(mon, true);
-                } else {
-                    Battle.performSwitch(mon);
-                }
+                if (this.forcedSwitch) Battle.switchIn(mon, true); else Battle.performSwitch(mon);
             },
 
-            partyStats() { this.closeContext(); this.openSummary(this.party[this.selectedPartyIndex], this.state); },
-
+            // --- EXP & WINS ---
             async distributeExp(amount, targetIndices, isBossReward) {
-                // 1. Global Message
-                if (isBossReward) {
-                    AudioEngine.playSfx('exp');
-                    await Battle.typeText(`The team gained\n${amount} EXP. Points!`);
-                }
-
-                // 2. Loop through targets sequentially
+                if (isBossReward) { AudioEngine.playSfx('exp'); await Battle.typeText(`The team gained\n${amount} EXP. Points!`); }
                 for (const index of targetIndices) {
                     const p = this.party[index];
                     if (!p || p.currentHp <= 0) continue;
-
-                    // Visuals for the active Pokemon
                     if (index === this.activeSlot) {
-                        if (!isBossReward) {
-                            // If not boss, we show individual text per mon
-                            await Battle.typeText(`${p.name} gained\n${amount} EXP. Points!`);
-                        }
-                        // Run the bar filling animation
+                        if (!isBossReward) await Battle.typeText(`${p.name} gained\n${amount} EXP. Points!`);
                         await this.gainExpAnim(amount, p);
-                    }
-                    // Logic for background Pokemon
-                    else {
-                        if (!isBossReward) {
-                            await Battle.typeText(`${p.name} gained\n${amount} EXP. Points!`);
-                        }
+                    } else {
+                        if (!isBossReward) await Battle.typeText(`${p.name} gained\n${amount} EXP. Points!`);
                         p.exp += amount;
-                        if (p.exp >= p.nextLvlExp) {
-                            await this.processLevelUp(p);
-                        }
+                        if (p.exp >= p.nextLvlExp) await this.processLevelUp(p);
                     }
                 }
-
-                // 3. Done
                 this.finishWin();
             },
 
             gainExpAnim(amount, p) {
-                p.exp += amount;
-                Battle.updateHUD(p, 'player');
+                p.exp += amount; Battle.updateHUD(p, 'player');
                 const steps = 20; let i = 0;
                 return new Promise(resolve => {
                     const loop = setInterval(() => { AudioEngine.playSfx('exp'); i++; if (i >= steps) { clearInterval(loop); check(); } }, 50);
                     const check = async () => {
-                        if (p.exp >= p.nextLvlExp) {
-                            await this.processLevelUp(p);
-                            resolve();
-                        } else { resolve(); }
+                        if (p.exp >= p.nextLvlExp) { await this.processLevelUp(p); resolve(); } else resolve();
                     }
                 });
             },
@@ -4059,270 +3908,116 @@
             processLevelUp(p) {
                 return new Promise(async (resolve) => {
                     const startLvl = p.level;
-
-                    // 1. Math Phase
-                    while (p.exp >= p.nextLvlExp) {
-                        p.exp -= p.nextLvlExp;
-                        p.level++;
-                        p.nextLvlExp = Math.pow(p.level + 1, 3) - Math.pow(p.level, 3);
-                    }
-
-                    // 2. Stat Update Phase (Using the new helper)
+                    while (p.exp >= p.nextLvlExp) { p.exp -= p.nextLvlExp; p.level++; p.nextLvlExp = Math.pow(p.level + 1, 3) - Math.pow(p.level, 3); }
                     StatCalc.recalculate(p);
-
-                    // 3. Audio/Visual Phase
                     AudioEngine.playSfx('levelup');
-
                     if (this.activeSlot === this.party.indexOf(p)) {
                         const hud = document.getElementById('player-hud');
-                        hud.classList.remove('hud-flash-blue');
-                        void hud.offsetWidth;
-                        hud.classList.add('hud-flash-blue');
+                        hud.classList.remove('hud-flash-blue'); void hud.offsetWidth; hud.classList.add('hud-flash-blue');
                         Battle.updateHUD(p, 'player');
                     }
-
-                    // 4. Text Phase
-                    const levelsGained = p.level - startLvl;
-                    const msg = (levelsGained > 1)
-                        ? `${p.name} grew all the way\nto Level ${p.level}!`
-                        : `${p.name} grew to Level ${p.level}!`;
-
-                    await Battle.typeText(msg);
+                    await Battle.typeText(p.level - startLvl > 1 ? `${p.name} grew all the way\nto Level ${p.level}!` : `${p.name} grew to Level ${p.level}!`);
                     resolve();
                 });
             },
 
             finishWin() {
                 const p = this.party[this.activeSlot];
-
-                // --- HEAL LOGIC ---
                 const range = GAME_BALANCE.HEAL_WIN_MAX_PCT - GAME_BALANCE.HEAL_WIN_MIN_PCT;
-                const healPct = GAME_BALANCE.HEAL_WIN_MIN_PCT + (Math.random() * range);
-                const healAmt = Math.floor(p.maxHp * healPct);
+                const healAmt = Math.floor(p.maxHp * (GAME_BALANCE.HEAL_WIN_MIN_PCT + (Math.random() * range)));
+                if (healAmt > 0) { p.currentHp = Math.min(p.maxHp, p.currentHp + healAmt); AudioEngine.playSfx('heal'); Battle.updateHUD(p, 'player'); }
 
-                if (healAmt > 0) {
-                    p.currentHp = Math.min(p.maxHp, p.currentHp + healAmt);
-                    AudioEngine.playSfx('heal');
-                    Battle.updateHUD(p, 'player');
-                }
+                const finalize = () => { this.save(); setTimeout(() => this.startNewBattle(false), 1000); };
 
-                // --- SEQUENCE CHAIN ---
-
-                // 4. Finalize
-                const finalize = () => {
-                    this.save();
-                    setTimeout(() => this.startNewBattle(false), 1000);
-                };
-
-                // 3. Transform Reset
-                const checkTransformReset = async () => {
+                const checkTransform = async () => {
                     if (p.transformBackup) {
-                        const sprite = document.getElementById('player-sprite');
-                        AudioEngine.playSfx('swoosh');
-
-                        // Flash White
-                        sprite.style.transition = 'filter 0.2s';
-                        sprite.style.filter = "brightness(10)";
-                        await wait(200);
-
-                        // Logic Revert
+                        const s = document.getElementById('player-sprite');
+                        AudioEngine.playSfx('swoosh'); s.style.filter = "brightness(10)"; await wait(200);
                         Battle.revertTransform(p);
-
-                        // Update Sprite & HUD
-                        sprite.src = p.backSprite;
-                        sprite.classList.remove('transformed-sprite');
-                        sprite.style.filter = "none";
-                        Battle.updateHUD(p, 'player');
-
-                        await Battle.typeText(`${p.name} transformed\nback!`);
-                        finalize();
-                    } else {
-                        finalize();
+                        s.src = p.backSprite; s.classList.remove('transformed-sprite'); s.style.filter = "none";
+                        Battle.updateHUD(p, 'player'); await Battle.typeText(`${p.name} transformed\nback!`);
                     }
+                    finalize();
                 };
 
-                // 2. Rage Reset
-                const checkRageReset = () => {
-                    if (p.rageLevel > 0) {
-                        p.rageLevel = 0;
-                        Battle.updateHUD(p, 'player');
-                        Battle.typeText(`${p.name} became\ncalm again!`, checkTransformReset);
-                    } else {
-                        checkTransformReset();
-                    }
-                };
+                const checkRage = () => { if (p.rageLevel > 0) { p.rageLevel = 0; Battle.updateHUD(p, 'player'); Battle.typeText(`${p.name} became\ncalm again!`, checkTransform); } else checkTransform(); };
 
-                // 1. SUBSTITUTE RESET (New)
-                const checkSubReset = async () => {
-                    if (p.volatiles.substituteHP > 0) {
-                        // Visual Reset
-                        const sprite = document.getElementById('player-sprite');
-                        if (p.volatiles.originalSprite) sprite.src = p.volatiles.originalSprite;
-
-                        p.volatiles.substituteHP = 0;
-                        p.volatiles.originalSprite = null;
-
-                        AudioEngine.playSfx('swoosh');
-                        await Battle.typeText("The SUBSTITUTE\nfaded away!");
-
-                        // Drop loot logic starts after this
-                        checkLoot();
-                    } else {
-                        checkLoot();
-                    }
-                };
-
-                // 0. Loot Logic (Moved inside function for cleaner chain)
                 const checkLoot = () => {
                     const levelDiff = this.enemyMon.level - p.level;
-                    let dropChance = this.enemyMon.isBoss ? LOOT_SYSTEM.DROP_RATE_BOSS : LOOT_SYSTEM.DROP_RATE_WILD;
-                    if (levelDiff > 0) dropChance += (levelDiff * 0.05);
-
-                    if (Math.random() < dropChance) {
-                        const itemType = this.getLoot(this.enemyMon, levelDiff);
-                        this.inventory[itemType]++;
-                        AudioEngine.playSfx('funfair');
-                        Battle.typeText(`Oh! ${this.enemyMon.name} dropped\na ${ITEMS[itemType].name}.`, checkRageReset);
-                    } else {
-                        checkRageReset();
-                    }
+                    let rate = this.enemyMon.isBoss ? LOOT_SYSTEM.DROP_RATE_BOSS : LOOT_SYSTEM.DROP_RATE_WILD;
+                    if (levelDiff > 0) rate += (levelDiff * 0.05);
+                    if (RNG.roll(rate)) {
+                        const key = this.getLoot(this.enemyMon, levelDiff); this.inventory[key]++; AudioEngine.playSfx('funfair');
+                        Battle.typeText(`Oh! ${this.enemyMon.name} dropped\na ${ITEMS[key].name}.`, checkRage);
+                    } else checkRage();
                 };
 
-                // START THE CHAIN
-                checkSubReset();
+                if (p.volatiles.substituteHP > 0) {
+                    if (p.volatiles.originalSprite) document.getElementById('player-sprite').src = p.volatiles.originalSprite;
+                    p.volatiles.substituteHP = 0; p.volatiles.originalSprite = null;
+                    AudioEngine.playSfx('swoosh'); Battle.typeText("The SUBSTITUTE\nfaded away!", checkLoot);
+                } else checkLoot();
             },
 
             getLoot(enemy, levelDiff = 0) {
-                // Debug Force Item
-                if (typeof DEBUG !== 'undefined' && DEBUG.ENABLED && DEBUG.LOOT.FORCE_ITEM) {
-                    return DEBUG.LOOT.FORCE_ITEM;
-                }
-
-                // 1. Calculate "Progress Score"
+                if (DEBUG.ENABLED && DEBUG.LOOT.FORCE_ITEM) return DEBUG.LOOT.FORCE_ITEM;
                 const bst = Object.values(enemy.baseStats).reduce((a, b) => a + b, 0);
+                const score = (enemy.level * 1.5) + (bst / 10) + (this.wins * 1.5) + (Math.max(0, levelDiff) * 25);
 
-                // --- NEW: UNDERDOG SCALING ---
-                // If levelDiff is positive (e.g. +3 levels), we add a huge bonus to the score.
-                // A +3 level difference adds +75 score, which is like having 50 extra wins.
-                const underdogBonus = Math.max(0, levelDiff) * 25;
-
-                const score = (enemy.level * 1.5) + (bst / 10) + (this.wins * 1.5) + underdogBonus;
-
-                // 2. Build Weighted Pool
                 let totalWeight = 0;
                 const pool = LOOT_SYSTEM.TABLE.map(item => {
-                    // Weight = Base + (Score * Scaling)
-                    let weight = item.base + (score * item.scaling);
-                    weight = Math.max(0, weight);
-                    totalWeight += weight;
-                    return { key: item.key, weight: weight };
+                    let weight = Math.max(0, item.base + (score * item.scaling));
+                    totalWeight += weight; return { key: item.key, weight: weight };
                 });
-
-                // 3. Roulette Selection
                 let random = Math.random() * totalWeight;
-                for (let item of pool) {
-                    if (random < item.weight) return item.key;
-                    random -= item.weight;
-                }
-
+                for (let item of pool) { if (random < item.weight) return item.key; random -= item.weight; }
                 return 'potion';
             },
 
-            // IN: Game object
             async tryMidBattleDrop(enemy) {
-                let chance = LOOT_SYSTEM.DROP_RATE_MID_BATTLE;
-                if (typeof DEBUG !== 'undefined' && DEBUG.ENABLED && DEBUG.LOOT.MID_BATTLE_RATE !== null) {
-                    chance = DEBUG.LOOT.MID_BATTLE_RATE;
-                }
-
-                if (Math.random() < chance) {
-                    const itemKey = this.getLoot(enemy, 0);
-                    this.inventory[itemKey]++;
-
-                    AudioEngine.playSfx('catch_success');
-
-                    // STANDARD TEXT FORMAT
-                    await Battle.typeText(`Oh! ${enemy.name} dropped\na ${ITEMS[itemKey].name}.`);
+                let chance = DEBUG.ENABLED && DEBUG.LOOT.MID_BATTLE_RATE !== null ? DEBUG.LOOT.MID_BATTLE_RATE : LOOT_SYSTEM.DROP_RATE_MID_BATTLE;
+                if (RNG.roll(chance)) {
+                    const key = this.getLoot(enemy, 0); this.inventory[key]++; AudioEngine.playSfx('catch_success');
+                    await Battle.typeText(`Oh! ${enemy.name} dropped\na ${ITEMS[key].name}.`);
                 }
             },
 
             handleWin(wasCaught) {
-                Battle.cleanup(); // <--- FIX: Resets Sprites and Weather
+                Battle.cleanup(); this.wins++; if (this.enemyMon.isBoss) this.bossesDefeated++;
+                document.getElementById('streak-box').innerText = `WINS: ${this.wins}`; this.state = 'BATTLE';
+                if (!wasCaught) this.enemyMon.currentHp = 0;
 
-                this.wins++;
-                if (this.enemyMon.isBoss) this.bossesDefeated++;
-                document.getElementById('streak-box').innerText = `WINS: ${this.wins}`;
-                this.state = 'BATTLE';
+                // EXP Calc
+                const b = this.enemyMon.baseExp; const L = this.enemyMon.level; const Lp = this.party[this.activeSlot].level;
+                let gain = Math.floor(((b * L) / 5) * Math.pow((2 * L + 10) / (L + Lp + 10), 2.5)) + 1;
+                if (this.enemyMon.isBoss) gain = Math.floor(gain * 1.5);
+                if (wasCaught) gain = Math.floor(gain * 0.8);
 
-                if (!wasCaught) {
-                    this.enemyMon.currentHp = 0;
-                }
-
-                // Calculate Base EXP
-                const enemy = this.enemyMon;
-                const b = enemy.baseExp;
-                const L = enemy.level;
-                const Lp = this.party[this.activeSlot].level;
-
-                let rawExp = (b * L) / 5;
-                const scale = Math.pow((2 * L + 10) / (L + Lp + 10), 2.5);
-                let xpGain = Math.floor(rawExp * scale) + 1;
-
-                if (enemy.isBoss) xpGain = Math.floor(xpGain * 1.5);
-
-                // Apply Catch Penalty
-                if (wasCaught) {
-                    xpGain = Math.floor(xpGain * 0.8);
-                }
-
-                // EXP DISTRIBUTION LOGIC
-                let targets, amountPerMon;
-
-                if (enemy.isBoss) {
-                    targets = this.party
-                        .map((p, index) => ({ p, index }))
-                        .filter(item => item.p.currentHp > 0)
-                        .map(item => item.index);
-                    amountPerMon = xpGain;
+                let targets, amt;
+                if (this.enemyMon.isBoss) {
+                    targets = this.party.map((p, i) => ({ p, i })).filter(x => x.p.currentHp > 0).map(x => x.i); amt = gain;
                 } else {
-                    targets = Array.from(Battle.participants);
-                    amountPerMon = Math.floor(xpGain / Math.max(1, targets.length));
+                    targets = Array.from(Battle.participants); amt = Math.floor(gain / Math.max(1, targets.length));
                 }
-
-                Game.distributeExp(amountPerMon, targets, enemy.isBoss);
+                this.distributeExp(amt, targets, this.enemyMon.isBoss);
             },
 
             handleLoss() {
-                // FIX: Do NOT call Battle.cleanup() here if we have survivors.
-                // Calling it prematurely resets weather, removes the enemy sprite,
-                // and causes the fainted player sprite to pop back up because it 
-                // strips the 'anim-faint' class.
-
-                // Ensure Text Box resets from full-width
-                const textEl = document.getElementById('text-content');
-                textEl.classList.remove('full-width');
-
-                if (this.party.some(p => p.currentHp > 0)) {
-                    // Survivors exist: Open party menu directly.
-                    // The fainted sprite stays hidden (via anim-faint) until processSwitch handles it.
-                    this.openParty(true);
-                } else {
-                    // Total Defeat: NOW we clean up.
+                document.getElementById('text-content').classList.remove('full-width');
+                if (this.party.some(p => p.currentHp > 0)) this.openParty(true);
+                else {
                     Battle.cleanup();
-
                     document.getElementById('game-boy').style.animation = "flashWhite 0.5s";
                     AudioEngine.playCry(this.party[this.activeSlot].cry);
-
                     Battle.typeText(`Player is out of Pokemon...`, () => setTimeout(() => {
                         document.getElementById('game-boy').style.animation = "";
-                        localStorage.removeItem('gs_battler_save');
-                        this.party = [];
-                        this.inventory = { potion: 1, superpotion: 0, hyperpotion: 0, maxpotion: 0, revive: 0, pokeball: 1, greatball: 0, ultraball: 0, masterball: 0 };
-                        this.showSelectionScreen();
+                        this.newGame();
                     }, 2500));
                 }
             },
         };
+
+
 
         const Battle = {
             p: null, e: null, textEl: document.getElementById('text-content'), uiLocked: true, typeInterval: null,
@@ -4497,29 +4192,17 @@
 
             // IN: Battle object
             updateHUD(mon, side) {
-                const nameSpan = document.getElementById(`${side}-name`);
+                // 1. Name & Level
+                const nameEl = document.getElementById(`${side}-name`);
 
-                // Handle Boss Name Line Breaks
-                if (mon.name.startsWith("BOSS ")) nameSpan.innerHTML = mon.name.replace("BOSS ", "BOSS<br>");
-                else nameSpan.innerText = mon.name;
+                // Handle Boss Line Breaks
+                if (mon.name.startsWith("BOSS ")) nameEl.innerHTML = mon.name.replace("BOSS ", "BOSS<br>");
+                else nameEl.innerText = mon.name;
 
                 document.getElementById(`${side}-lvl`).innerText = `Lv${mon.level}`;
 
-                const nameContainer = nameSpan.parentElement;
-
-                // --- 1. MANAGE STATUS ICON (PAR, BRN, SLP) ---
-                let statusEl = document.getElementById(`${side}-status-icon`);
-                if (!statusEl) {
-                    statusEl = document.createElement('span');
-                    statusEl.id = `${side}-status-icon`;
-                    // Style to match the retro look
-                    statusEl.style.marginLeft = "4px";
-                    statusEl.style.fontSize = "8px";
-                    statusEl.style.fontWeight = "bold";
-                    statusEl.style.textShadow = "1px 1px 0 #fff";
-                    nameContainer.appendChild(statusEl);
-                }
-
+                // 2. Status Icon (Updates existing span)
+                const statusEl = document.getElementById(`${side}-status-icon`);
                 if (mon.status && STATUS_DATA[mon.status]) {
                     statusEl.innerText = STATUS_DATA[mon.status].name;
                     statusEl.style.color = STATUS_DATA[mon.status].color;
@@ -4528,18 +4211,9 @@
                     statusEl.style.display = "none";
                 }
 
-                // --- 2. MANAGE RAGE ICON (!, !!, 💢) ---
-                let rageEl = document.getElementById(`${side}-rage-icon`);
-                if (!rageEl) {
-                    rageEl = document.createElement('span');
-                    rageEl.id = `${side}-rage-icon`;
-                    rageEl.className = 'aggro-icon'; // Keep existing animation class
-                    nameContainer.appendChild(rageEl);
-                }
-
-                // Reset class list to base, then re-add specific rage class
-                rageEl.className = 'aggro-icon';
-                rageEl.innerText = '';
+                // 3. Rage Icon (Updates existing span)
+                const rageEl = document.getElementById(`${side}-rage-icon`);
+                rageEl.className = 'aggro-icon'; // Reset animations to base
 
                 if (mon.rageLevel > 0) {
                     if (mon.rageLevel === 1) { rageEl.innerText = '!'; rageEl.classList.add('aggro-1'); }
@@ -4550,11 +4224,11 @@
                     rageEl.style.display = "none";
                 }
 
-                // --- 3. HP BARS ---
+                // 4. HP Bars
                 const pct = (Math.max(0, mon.currentHp) / mon.maxHp) * 100;
                 const bar = document.getElementById(`${side}-hp-bar`);
                 bar.style.width = Math.max(0, pct) + "%";
-                bar.style.backgroundColor = pct > 50 ? "#48c050" : pct > 20 ? "#d8b030" : "#c83828";
+                bar.style.backgroundColor = pct > 50 ? "var(--hp-green)" : pct > 20 ? "var(--hp-yellow)" : "var(--hp-red)";
 
                 if (side === 'player') {
                     document.getElementById('player-hp-text').innerText = `${Math.floor(Math.max(0, mon.currentHp))}/${mon.maxHp}`;
