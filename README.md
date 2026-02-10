@@ -23,6 +23,8 @@
 
 A fully-featured Pokémon battle simulator inspired by **Pokémon Gold & Silver**, built as a **single HTML file** with zero dependencies. It renders inside a pixel-perfect Game Boy Color shell and features:
 
+> **🔧 Modular Version:** A work-in-progress modularized version with separate files is available at [pokemon-battle-modular](https://github.com/s8y8b4rrwy-afk/Pokemon-battle-modular)
+
 - 🏟️ Full turn-based battle engine with Gen II damage formula
 - 📡 Live Pokémon data from [PokéAPI](https://pokeapi.co/) (all 251 Gen I & II Pokémon)
 - 🎵 Synthesized 8-bit sound effects via Web Audio API
